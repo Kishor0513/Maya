@@ -7,3 +7,6 @@ server/.env
 # tsc build artifacts (composite node config emits these next to source)
 vite.config.js
 vite.config.d.ts
+
+# tsc incremental state — never commit, it goes stale on other machines
+*.tsbuildinfo

@@ -369,6 +369,16 @@ const server = http.createServer((req, res) => {
   });
 });
 
+server.on('error', (err) => {
+  if (err && typeof err === 'object' && 'code' in err && err.code === 'EADDRINUSE') {
+    console.error(
+      `[hf-gateway] port ${PORT} is already in use — use the running server or set PORT to a free one.`,
+    );
+    process.exit(1);
+  }
+  throw err;
+});
+
 server.listen(PORT, () => {
   console.log(`[hf-gateway] listening on http://localhost:${PORT} (model: ${UPSTREAM_MODEL} via ${UPSTREAM_BASE})`);
 });
