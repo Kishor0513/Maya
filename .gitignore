@@ -3,3 +3,7 @@ dist/
 .env
 server/.env
 *.log
+
+# tsc build artifacts (composite node config emits these next to source)
+vite.config.js
+vite.config.d.ts
