@@ -9,8 +9,9 @@ services:
   # too (SERVE_DIR is baked into the image), so this URL alone also works.
   - type: web
     name: maya-gateway
-    runtime: docker
+    env: docker
     plan: free
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: UPSTREAM_BASE
         value: https://generativelanguage.googleapis.com/v1beta/openai
@@ -26,10 +27,9 @@ services:
   # Static frontend. Free forever, never sleeps.
   - type: web
     name: maya-app
-    runtime: static
-    plan: free
+    env: static
     buildCommand: npm ci && npm run build
-    staticPublishPath: dist
+    staticPublishPath: ./dist
     envVars:
       - key: VITE_API_URL
         value: https://maya-gateway.onrender.com
