@@ -22,7 +22,7 @@ gateway** (`/api/*`, `WS /api/realtime`), which holds provider keys, runs the
 real STT/LLM/memory-extraction/vector retrieval, and enforces auth, rate
 limits, and ownership checks.
 
-## Quickstart (demo mode — no backend needed)
+## Quickstart
 
 ```bash
 npm install
@@ -60,75 +60,6 @@ auto-listen apply in both.
    ```
 3. `set -a; source server/.env; set +a; node server/hf-gateway.js` → health at `curl localhost:8787/api/health`.
 4. `npm run dev` → http://localhost:5173. The app is Gemini-only: Settings shows the fixed provider, endpoint `/api` (proxied to the gateway in dev).
-
-## Hosting
-
-**Recommended free path: Hugging Face Spaces (Docker).** One container serves
-app + API on a single public URL — no split frontend/backend, no CORS headers
-to configure, no blueprint files.
-
-### Option 0: Hugging Face Spaces (Docker, free)
-
-1. Create a Space at `huggingface.co/new-space`: name `maya`, SDK **Docker**,
-   CPU basic hardware (free), visibility as you like.
-2. Push this repo to the Space (its git URL is
-   `https://huggingface.co/spaces/<you>/maya`). The included `Dockerfile`
-   is picked up automatically and builds the app + gateway together.
-3. Space **Settings → Variables and secrets** (no `VITE_*` needed — the app
-   and API share one origin):
-   `PORT=7860`, `UPSTREAM_BASE=https://generativelanguage.googleapis.com/v1beta/openai`,
-   `UPSTREAM_KEY=<your Gemini key>`, `UPSTREAM_MODEL=gemini-3.6-flash`,
-   `GATEWAY_TOKEN=<any random string>`.
-4. Wait for the build, open `https://<you>-maya.hf.space`, talk. Sleeps when
-   idle on free hardware; wakes on request.
-
-One process serves everything (app + API + memory). You need:
-- Brain config (`UPSTREAM_*`) + `PORT` — see `server/.env.example`
-- `GATEWAY_TOKEN` — set a random string when public, plus matching
-  `VITE_GATEWAY_TOKEN` baked into the frontend build (`VITE_GATEWAY_TOKEN=… npm run build`)
-- `ALLOWED_ORIGIN=https://your-domain` to lock CORS down in production
-
-### Option 1: Railway / Render / Fly.io (easiest, HTTPS included)
-
-- New service from this repo. Build command: `npm ci && npm run build`. Start: `npm run start`.
-- Set the env vars in the dashboard. You get `https://…` automatically —
-  **HTTPS is required for the microphone** (browsers block mic on plain HTTP).
-- Free tiers comfortably run this (the gateway is tiny; the AI runs at Google).
-
-### Option 2: Any VPS with Docker
-
-```bash
-docker build -t maya .
-docker run -d --restart unless-stopped -p 8787:8787 --env-file server/.env maya
-```
-
-Put Caddy/Nginx in front for automatic HTTPS, e.g. Caddy `reverse_proxy localhost:8787` on your domain. (`.dockerignore` keeps `server/.env` secrets out of the image — pass them with `--env-file` instead.)
-
-### Option 1.5: Frontend on Vercel / Netlify + gateway elsewhere (split)
-
-The static frontend **can** live on Vercel/Netlify; the Node gateway **cannot** —
-it needs always-on hosting (Option 1 or 2 above) for the API key, SSE streaming,
-and memory. Serverless functions are not a drop-in home for it (10–60s limits
-vs. long streams, plus memory would need an external DB).
-
-- Deploy the gateway first → note its URL, e.g. `https://maya-gw.onrender.com`
-- Vercel/Netlify: import the repo. Build `npm ci && npm run build`, output dir `dist`.
-- Environment — set **before building**, Vite bakes these in:
-  `VITE_API_URL=https://maya-gw.onrender.com`, `VITE_GATEWAY_TOKEN=<same as gateway>`.
-  The app then calls the gateway directly; no Settings change needed.
-- On the gateway set `ALLOWED_ORIGIN=https://your-app.vercel.app`.
-- HTTPS on both ends (Vercel gives it to the frontend, Render/Railway to the
-  gateway) — the mic needs it, and so do the cross-origin API calls.
-- Rebuild + redeploy the frontend whenever these vars change. Voice realtime
-  stays local-loopback (the gateway has no WS endpoint); chat, voice I/O,
-  streaming, and memory all work.
-
-### Production warnings
-
-- **Mic needs HTTPS.** An `http://your-ip` URL will load, but voice input won't work.
-- **Set GATEWAY_TOKEN.** Without it, anyone with the URL spends your Gemini quota. It's a shared secret, not user accounts — right for personal/small-team use.
-- **Memory is in-process RAM.** Gateway restarts wipe server-side `/api/memories` (browsers keep their own copy). Plug in SQLite/Postgres before real use.
-- **No user accounts.** Don't host one instance for strangers.
 
 ### Backend contract
 
