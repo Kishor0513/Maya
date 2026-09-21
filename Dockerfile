@@ -4,6 +4,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# Baked into the frontend at build time so the app can pass the gateway's
+# shared-secret header. Set the same value as GATEWAY_TOKEN in Railway.
+ARG VITE_GATEWAY_TOKEN=""
+ENV VITE_GATEWAY_TOKEN=$VITE_GATEWAY_TOKEN
 RUN npm run build
 
 FROM node:22-alpine
