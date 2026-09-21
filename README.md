@@ -63,12 +63,24 @@ auto-listen apply in both.
 
 ## Hosting
 
-**Cheapest true answer: Render, all free.** This repo ships a `render.yaml`
-blueprint: one free static site (frontend, never sleeps) + one free Docker
-web service (gateway, sleeps when idle — first message after sleep takes
-~30–60s to wake, then instant). Dashboard → New → Blueprint → this repo,
-paste the two prompted secrets, done. Your Gemini API free quota is separate
-and unaffected.
+**Recommended free path: Hugging Face Spaces (Docker).** One container serves
+app + API on a single public URL — no split frontend/backend, no CORS headers
+to configure, no blueprint files.
+
+### Option 0: Hugging Face Spaces (Docker, free)
+
+1. Create a Space at `huggingface.co/new-space`: name `maya`, SDK **Docker**,
+   CPU basic hardware (free), visibility as you like.
+2. Push this repo to the Space (its git URL is
+   `https://huggingface.co/spaces/<you>/maya`). The included `Dockerfile`
+   is picked up automatically and builds the app + gateway together.
+3. Space **Settings → Variables and secrets** (no `VITE_*` needed — the app
+   and API share one origin):
+   `PORT=7860`, `UPSTREAM_BASE=https://generativelanguage.googleapis.com/v1beta/openai`,
+   `UPSTREAM_KEY=<your Gemini key>`, `UPSTREAM_MODEL=gemini-3.6-flash`,
+   `GATEWAY_TOKEN=<any random string>`.
+4. Wait for the build, open `https://<you>-maya.hf.space`, talk. Sleeps when
+   idle on free hardware; wakes on request.
 
 One process serves everything (app + API + memory). You need:
 - Brain config (`UPSTREAM_*`) + `PORT` — see `server/.env.example`
