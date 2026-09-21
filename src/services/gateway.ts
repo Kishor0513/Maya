@@ -1,3 +1,5 @@
+import { useAuthStore } from '../stores/authStore';
+
 // Shared-secret header for the gateway (see server/hf-gateway.js).
 // Baked in at build time via VITE_GATEWAY_TOKEN. Omit it and no header
 // is sent (local dev stays exactly as before).
@@ -6,7 +8,15 @@ const TOKEN = import.meta.env.VITE_GATEWAY_TOKEN as string | undefined;
 export function gatewayHeaders(
   extra: Record<string, string> = {},
 ): Record<string, string> {
-  return { ...(TOKEN ? { 'x-gateway-token': TOKEN } : {}), ...extra };
+  const out: Record<string, string> = { ...extra };
+  if (TOKEN) out['x-gateway-token'] = TOKEN;
+  try {
+    const session = useAuthStore.getState().token;
+    if (session) out['Authorization'] = `Bearer ${session}`;
+  } catch {
+    /* store unavailable (tests) — skip */
+  }
+  return out;
 }
 
 const API_BASE =

@@ -12,6 +12,12 @@ import { Onboarding } from '../components/common/Onboarding';
 import { ConversationSidebar } from '../components/sidebar/ConversationSidebar';
 import { SettingsPanel } from '../components/settings/SettingsPanel';
 import { MemoryPanel } from '../components/memory/MemoryPanel';
+import { DocsPanel } from '../components/memory/DocsPanel';
+import { PlansPanel } from '../components/plans/PlansPanel';
+import { AuthGate } from '../components/common/AuthGate';
+import { ACCENTS } from '../features/appearance/accents';
+import { initReminders } from '../services/tools/MayaTools';
+import { useAuthStore } from '../stores/authStore';
 import { useConversationEngine } from '../hooks/useConversation';
 import { useVoiceActivity } from '../hooks/useVoiceActivity';
 import { useRealtime } from '../hooks/useRealtime';
@@ -53,6 +59,9 @@ export function App() {
   const vadEnabled = useSettingsStore((s) => s.audio.vadEnabled);
   const onboarded = useSettingsStore((s) => s.onboarded);
   const ambient = useSettingsStore((s) => s.appearance.ambientEffects);
+  const accent = useSettingsStore((s) => s.appearance.accent);
+  const avatarStyle = useSettingsStore((s) => s.appearance.avatarStyle);
+  const glow = ACCENTS[accent] ?? ACCENTS.violet;
   const userName = useSettingsStore((s) => s.userName);
 
   const avatarState = useMayaStore((s) => s.avatarState);
@@ -83,6 +92,16 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [plansOpen, setPlansOpen] = useState(false);
+  const authRequired = useAuthStore((s) => s.required);
+  const authToken = useAuthStore((s) => s.token);
+  const probeAuth = useAuthStore((s) => s.probe);
+
+  useEffect(() => {
+    void probeAuth();
+    initReminders();
+  }, [probeAuth]);
   const [permOpen, setPermOpen] = useState(false);
   const [micOn, setMicOn] = useState(false);
 
@@ -150,9 +169,9 @@ export function App() {
       {ambient && (
         <div aria-hidden className="pointer-events-none absolute inset-0">
           <div className="absolute left-1/2 top-[-20%] h-[60vh] w-[90vw] -translate-x-1/2 rounded-full blur-[120px]"
-            style={{ background: 'radial-gradient(closest-side, rgba(124,93,250,0.22), transparent)' }} />
+            style={{ background: `radial-gradient(closest-side, ${glow.ambientA}, transparent)` }} />
           <div className="absolute bottom-[-25%] left-[8%] h-[50vh] w-[50vw] rounded-full blur-[120px]"
-            style={{ background: 'radial-gradient(closest-side, rgba(249,168,212,0.12), transparent)' }} />
+            style={{ background: `radial-gradient(closest-side, ${glow.ambientB}, transparent)` }} />
         </div>
       )}
 
@@ -161,6 +180,8 @@ export function App() {
         onClose={() => setSidebar(false)}
         onOpenSettings={() => { setSidebar(false); setSettingsOpen(true); }}
         onOpenMemory={() => { setSidebar(false); setMemoryOpen(true); }}
+        onOpenDocs={() => { setSidebar(false); setDocsOpen(true); }}
+        onOpenPlans={() => { setSidebar(false); setPlansOpen(true); }}
       />
 
       <main className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
@@ -235,6 +256,8 @@ export function App() {
             inputLevel={inputLevel}
             outputLevel={outputLevel}
             emotion={emotion}
+            accent={accent}
+            variant={avatarStyle}
           />
 
           <div className="min-h-[3.5rem] max-w-xl">
@@ -253,6 +276,8 @@ export function App() {
             inputLevel={inputLevel}
             outputLevel={outputLevel}
             state={convState}
+            from={glow.wave[0]}
+            to={glow.wave[1]}
             className="w-full max-w-md"
           />
 
@@ -310,7 +335,7 @@ export function App() {
         {/* Bottom input — pinned, never squeezed out */}
         <footer className="shrink-0 px-4 pb-5 sm:px-6">
           <ChatInput
-            onSend={(t) => { setMicOn(true); void engine.processTurn(t); }}
+            onSend={(t, images) => { setMicOn(true); void engine.processTurn(t, images); }}
             disabled={convState === 'processing'}
             placeholder={view === 'chat' ? 'Message Maya…  (Enter to send)' : 'Type something…  (Enter to send)'}
           />
@@ -319,6 +344,9 @@ export function App() {
 
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
       {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
+      {docsOpen && <DocsPanel onClose={() => setDocsOpen(false)} />}
+      {plansOpen && <PlansPanel onClose={() => setPlansOpen(false)} />}
+      {authRequired && !authToken && <AuthGate />}
       <PermissionDialog
         open={permOpen}
         onAllow={async () => { setPermOpen(false); const ok = await engine.ensureMic(); if (ok) setMicOn(true); }}

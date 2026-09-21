@@ -150,6 +150,18 @@ function ChatBubble({ message }: { message: ChatMessage }) {
               <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-violet-300 align-middle" aria-hidden />
             )}
           </p>
+          {message.images && message.images.length > 0 && (
+            <div className="mb-1 mt-2 grid grid-cols-3 gap-1.5">
+              {message.images.map((src, i) => (
+                <img key={i} src={src} alt={`Attached image ${i + 1}`} loading="lazy" className="aspect-square rounded-lg border border-white/10 object-cover" />
+              ))}
+            </div>
+          )}
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <p className="mt-1.5 text-[11px] text-zinc-500">
+              used {message.toolCalls.map((t) => t.name).join(', ')}
+            </p>
+          )}
           {message.sources && message.sources.length > 0 && (
             <div className="mt-2 border-t border-white/[0.07] pt-2 text-xs text-zinc-400">
               <p className="mb-1 text-[10px] uppercase tracking-widest">Sources</p>

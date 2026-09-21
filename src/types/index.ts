@@ -39,6 +39,8 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   audioUrl?: string;
+  /** Attached images as data URLs (resized client-side before send). */
+  images?: string[];
   partial?: boolean;
   sources?: SourceRef[];
   toolCalls?: ToolCallRecord[];
@@ -120,6 +122,8 @@ export interface ConversationContext {
   userName?: string;
   /** Reply channel — controls response length. Defaults to voice. */
   channel?: 'voice' | 'text';
+  /** Attached images as data URLs for multimodal models. */
+  images?: string[];
 }
 
 export interface MayaPersonality {
@@ -170,12 +174,16 @@ export interface AppearanceSettings {
   theme: 'dark' | 'light' | 'system';
   ambientEffects: boolean;
   animations: boolean;
+  accent: 'violet' | 'ocean' | 'ember';
+  avatarStyle: 'orb' | 'halo' | 'prism';
 }
 
 export interface ConversationSettings {
   autoListen: boolean;
   allowInterrupt: boolean;
   autoPlayResponses: boolean;
+  /** Beta: trigger listening on "hey maya" while the mic is on. */
+  wakeWord: boolean;
 }
 
 export interface PrivacySettings {
@@ -246,4 +254,6 @@ export interface MayaAvatarProps {
   inputLevel: number;
   outputLevel: number;
   emotion: EmotionalState;
+  accent?: 'violet' | 'ocean' | 'ember';
+  variant?: 'orb' | 'halo' | 'prism';
 }

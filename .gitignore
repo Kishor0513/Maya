@@ -4,6 +4,9 @@ dist/
 server/.env
 *.log
 
+# gateway data (sqlite + JSON fallback hold real user content)
+data/
+
 # tsc build artifacts (composite node config emits these next to source)
 vite.config.js
 vite.config.d.ts

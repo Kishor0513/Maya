@@ -135,6 +135,41 @@ export class AudioManager {
     }
   }
 
+  /**
+   * Play a decoded buffer, resolving when it finishes. Lets callers chain
+   * sentence audio (gateway voice) while honoring stopPlayback() between
+   * chunks — stop() ends the node, onended still fires, callers check their
+   * own abort flags before queuing the next chunk.
+   */
+  async playAudioBuffer(data: ArrayBuffer): Promise<void> {
+    this.initialize();
+    if (!this.ctx || !this.outGain || this.destroyed) return;
+    const copy = data.slice(0);
+    let buf: AudioBuffer;
+    try {
+      buf = await this.ctx.decodeAudioData(copy);
+    } catch {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      if (!this.ctx || !this.outGain) return resolve();
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.outGain);
+      this.playbackNodes.add(src);
+      src.onended = () => {
+        this.playbackNodes.delete(src);
+        resolve();
+      };
+      try {
+        src.start();
+      } catch {
+        this.playbackNodes.delete(src);
+        resolve();
+      }
+    });
+  }
+
   /** Speak text via system TTS routed visually through output analyser approximation. */
   speakWithSystemTTS(
     text: string,

@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { useConversationStore } from '../../stores/conversationStore';
 import { timeAgo, cx } from '../../utils/format';
+import { conversationToMarkdown, downloadFile, safeFileName } from '../../utils/export';
 
 export function ConversationSidebar({
   open,
   onClose,
   onOpenSettings,
   onOpenMemory,
+  onOpenDocs,
+  onOpenPlans,
 }: {
   open: boolean;
   onClose: () => void;
   onOpenSettings: () => void;
   onOpenMemory: () => void;
+  onOpenDocs: () => void;
+  onOpenPlans: () => void;
 }) {
   const conversations = useConversationStore((s) => s.conversations);
   const activeId = useConversationStore((s) => s.activeId);
@@ -31,6 +36,11 @@ export function ConversationSidebar({
   for (const c of filtered) {
     (now - c.updatedAt < 86_400_000 ? today : older).push(c);
   }
+
+  const exportConversation = (id: string) => {
+    const c = conversations.find((x) => x.id === id);
+    if (c) downloadFile(`${safeFileName(c.title)}.md`, conversationToMarkdown(c));
+  };
 
   return (
     <>
@@ -78,13 +88,15 @@ export function ConversationSidebar({
               Your conversations with Maya will appear here.
             </p>
           )}
-          <Section title="Today" items={today} activeId={activeId} setActive={setActive} onDelete={deleteConversation} onNavigate={onClose} />
-          <Section title="Older" items={older} activeId={activeId} setActive={setActive} onDelete={deleteConversation} onNavigate={onClose} />
+          <Section title="Today" items={today} activeId={activeId} setActive={setActive} onDelete={deleteConversation} onExport={exportConversation} onNavigate={onClose} />
+          <Section title="Older" items={older} activeId={activeId} setActive={setActive} onDelete={deleteConversation} onExport={exportConversation} onNavigate={onClose} />
         </nav>
 
-        <div className="border-t border-white/[0.07] p-3 flex gap-2">
-          <button onClick={onOpenMemory} className="flex-1 rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Memory</button>
-          <button onClick={onOpenSettings} className="flex-1 rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Settings</button>
+        <div className="border-t border-white/[0.07] p-3 grid grid-cols-2 gap-2">
+          <button onClick={onOpenMemory} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Memory</button>
+          <button onClick={onOpenDocs} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Knowledge</button>
+          <button onClick={onOpenPlans} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Plans</button>
+          <button onClick={onOpenSettings} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Settings</button>
         </div>
       </aside>
     </>
@@ -97,6 +109,7 @@ function Section({
   activeId,
   setActive,
   onDelete,
+  onExport,
   onNavigate,
 }: {
   title: string;
@@ -104,6 +117,7 @@ function Section({
   activeId: string | null;
   setActive: (id: string) => void;
   onDelete: (id: string) => void;
+  onExport: (id: string) => void;
   onNavigate: () => void;
 }) {
   if (items.length === 0) return null;
@@ -123,6 +137,14 @@ function Section({
             >
               <span className="block truncate text-sm">{c.title}</span>
               <span className="block text-[11px] text-zinc-600">{timeAgo(c.updatedAt)}</span>
+            </button>
+            <button
+              onClick={() => onExport(c.id)}
+              aria-label={`Export ${c.title} as Markdown`}
+              title="Export as Markdown"
+              className="absolute right-9 top-2.5 hidden rounded-full px-2 py-0.5 text-xs text-zinc-600 hover:text-white group-hover:block"
+            >
+              ↓
             </button>
             <button
               onClick={() => onDelete(c.id)}

@@ -20,6 +20,16 @@ export function TranscriptMessage({ message }: { message: ChatMessage }) {
           {message.text}
           {message.partial && <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-violet-300 align-middle" />}
         </p>
+        {message.images && message.images.length > 0 && (
+          <div className="mb-1 mt-2 grid grid-cols-3 gap-1.5">
+            {message.images.map((src, i) => (
+              <img key={i} src={src} alt={`Attached image ${i + 1}`} loading="lazy" className="aspect-square rounded-lg border border-white/10 object-cover" />
+            ))}
+          </div>
+        )}
+        {message.toolCalls && message.toolCalls.length > 0 && (
+          <p className="mt-1 text-[11px] text-zinc-500">used {message.toolCalls.map((t) => t.name).join(', ')}</p>
+        )}
         {message.sources && message.sources.length > 0 && (
           <div className="mt-2 text-xs text-zinc-400">
             <p className="uppercase tracking-widest text-[10px] mb-1">Sources</p>

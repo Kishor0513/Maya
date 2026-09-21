@@ -4,6 +4,8 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useConversationStore } from '../../stores/conversationStore';
 import { memoryService } from '../../services/memory/MemoryService';
 import { textToSpeech } from '../../services/speech/TextToSpeech';
+import { ACCENTS, type AccentId } from '../../features/appearance/accents';
+import { downloadFile } from '../../utils/export';
 
 export function VoiceSettings() {
   const voice = useSettingsStore((s) => s.voice);
@@ -20,7 +22,8 @@ export function VoiceSettings() {
           onChange={(e) => updateNested('voice', { voiceId: e.target.value })}
           className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-violet-300/50"
         >
-          <option value="">Maya — Warm (default)</option>
+          <option value="">Maya — Warm (default, female system voice)</option>
+          <option value="gateway">Maya — Cloud voice (gateway MP3)</option>
           <option value="calm">Maya — Calm</option>
           <option value="energetic">Maya — Energetic</option>
           {voices.slice(0, 20).map((v) => (
@@ -36,6 +39,21 @@ export function VoiceSettings() {
         onChange={(v) => updateNested('voice', { pitch: v })} />
       <Slider label="Expressiveness" value={voice.expressiveness} min={0} max={1} step={0.01}
         onChange={(v) => updateNested('voice', { expressiveness: v })} />
+      <button
+        type="button"
+        onClick={() => {
+          void textToSpeech
+            .speak('Hi, I\u2019m Maya. This is how I sound.', {
+              rate: voice.speed,
+              pitch: voice.pitch,
+              voiceId: voice.voiceId || undefined,
+            })
+            .catch(() => undefined);
+        }}
+        className="w-full rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
+      >
+        Preview voice
+      </button>
     </div>
   );
 }
@@ -110,6 +128,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             onChange={(v) => s.updateNested('conversation', { allowInterrupt: v })} />
           <Toggle label="Auto-play voice responses" checked={s.conversation.autoPlayResponses}
             onChange={(v) => { s.updateNested('conversation', { autoPlayResponses: v }); s.updateNested('voice', { autoPlay: v }); }} />
+          <Toggle label="Wake word “hey maya” (beta, while mic is on)" checked={s.conversation.wakeWord}
+            onChange={(v) => s.updateNested('conversation', { wakeWord: v })} />
           <div className="mt-3">
             <label className="text-xs uppercase tracking-widest text-zinc-500" htmlFor="vmode">Microphone mode</label>
             <select id="vmode" value={s.voiceMode} onChange={(e) => s.update('voiceMode', e.target.value as typeof s.voiceMode)}
@@ -145,6 +165,27 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         </Section>
 
         <Section title="Appearance">
+          <p className="mb-1.5 text-xs uppercase tracking-widest text-zinc-500">Accent lighting</p>
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Accent lighting">
+            {(['violet', 'ocean', 'ember'] as const).map((a: AccentId) => (
+              <button key={a} role="radio" aria-checked={s.appearance.accent === a}
+                onClick={() => s.updateNested('appearance', { accent: a })}
+                className={`flex items-center justify-center gap-1.5 rounded-full border py-2 text-sm ${s.appearance.accent === a ? 'border-violet-300/60 bg-violet-300/15 text-white' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}>
+                <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={{ background: ACCENTS[a].a }} />
+                {ACCENTS[a].label}
+              </button>
+            ))}
+          </div>
+          <p className="mb-1.5 mt-3 text-xs uppercase tracking-widest text-zinc-500">Avatar style</p>
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Avatar style">
+            {(['orb', 'halo', 'prism'] as const).map((v) => (
+              <button key={v} role="radio" aria-checked={s.appearance.avatarStyle === v}
+                onClick={() => s.updateNested('appearance', { avatarStyle: v })}
+                className={`rounded-full border py-2 text-sm capitalize ${s.appearance.avatarStyle === v ? 'border-violet-300/60 bg-violet-300/15 text-white' : 'border-white/10 text-zinc-400 hover:bg-white/5'}`}>
+                {v}
+              </button>
+            ))}
+          </div>
           <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Theme">
             {(['dark', 'light', 'system'] as const).map((t) => (
               <button key={t} role="radio" aria-checked={s.appearance.theme === t}
@@ -190,6 +231,13 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           <input id="yourname" value={s.userName} onChange={(e) => s.update('userName', e.target.value)}
             placeholder="Your name" className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white" />
           <p className="mt-3 text-[11px] text-zinc-600">Keyboard: Space push-to-talk · Esc stop · Ctrl/⌘+K search · Ctrl/⌘+N new chat</p>
+          <button
+            type="button"
+            onClick={() => downloadFile('maya-conversations.json', JSON.stringify(conv.conversations, null, 2), 'application/json')}
+            className="mt-3 w-full rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5"
+          >
+            Export all conversations (JSON)
+          </button>
         </Section>
       </div>
     </div>

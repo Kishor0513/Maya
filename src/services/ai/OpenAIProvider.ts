@@ -143,11 +143,21 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   private toWire(messages: ChatMessage[], context?: ConversationContext) {
-    const out: { role: string; content: string }[] = [];
+    const out: { role: string; content: unknown }[] = [];
     if (context) out.push({ role: 'system', content: buildSystemPrompt(undefined, context) });
     for (const m of messages.slice(-20)) {
       if (m.role === 'system') continue;
-      out.push({ role: m.role, content: m.text });
+      if (m.role === 'user' && m.images && m.images.length > 0) {
+        out.push({
+          role: m.role,
+          content: [
+            { type: 'text', text: m.text },
+            ...m.images.slice(0, 3).map((url) => ({ type: 'image_url', image_url: { url } })),
+          ],
+        });
+      } else {
+        out.push({ role: m.role, content: m.text });
+      }
     }
     return out;
   }
@@ -158,7 +168,7 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   private httpError(status: number): Error {
     if (status === 401 || status === 403)
-      return new Error('Invalid or missing credentials on the backend gateway.');
+      return new Error('Invalid or missing credentials on the backend gateway (401).');
     if (status === 429) return new Error('Rate limited. Please wait a moment and try again.');
     if (status >= 500) return new Error('Backend unavailable. Please try again shortly.');
     return new Error(`Chat request failed (${status}).`);

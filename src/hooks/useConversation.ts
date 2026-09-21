@@ -10,7 +10,120 @@ import { useConversationStore } from '../stores/conversationStore';
 import { useSettingsStore, sttLang } from '../stores/settingsStore';
 import { useMayaStore } from '../stores/mayaStore';
 import { useVoiceStore } from '../stores/voiceStore';
-import type { ConversationContext } from '../types';
+import { useAuthStore } from '../stores/authStore';
+import { getTool, describeWhen, callGatewayTool } from '../services/tools/MayaTools';
+import type { ChatMessage, ConversationContext, SourceRef, ToolCallRecord } from '../types';
+
+/**
+ * Play gateway TTS sentence audio sequentially. Returns false so the caller
+ * falls back to system TTS when the gateway has no voice configured.
+ */
+async function speakViaGateway(text: string, cancelled: () => boolean): Promise<boolean> {
+  try {
+    const data = (await callGatewayTool('tts', { text })) as { audios?: unknown };
+    const chunks = (Array.isArray(data?.audios) ? data.audios : []).filter(
+      (a): a is string => typeof a === 'string' && a.length > 0,
+    );
+    if (chunks.length === 0) return false;
+    for (const b64 of chunks) {
+      if (cancelled()) return true;
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      await audioManager.playAudioBuffer(bytes.buffer);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type ToolKind = 'search' | 'weather' | 'reminder' | 'event';
+
+interface ToolJob {
+  kind: ToolKind;
+  name: string;
+  arg1: string;
+  arg2: string;
+}
+
+const TOOL_NAMES: Record<ToolKind, string> = {
+  search: 'web_search',
+  weather: 'weather',
+  reminder: 'reminder',
+  event: 'calendar',
+};
+
+/** Extract [SEARCH: ..] / [WEATHER: ..] / [REMINDER: .. | ..] / [EVENT: .. | ..] jobs. */
+function extractToolJobs(text: string): ToolJob[] {
+  const out: ToolJob[] = [];
+  const re = /\[(SEARCH|WEATHER|REMINDER|EVENT):\s*([^\]]+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null && out.length < 6) {
+    const kind = m[1].toLowerCase() as ToolKind;
+    const parts = m[2].split('|').map((s) => s.trim());
+    out.push({ kind, name: TOOL_NAMES[kind], arg1: parts[0] ?? '', arg2: parts[1] ?? '' });
+  }
+  return out;
+}
+
+const TOOL_TAG_RE = /\[(?:SEARCH|WEATHER|REMINDER|EVENT):\s*[^\]]+\]/g;
+
+async function runToolJob(job: ToolJob): Promise<{
+  text: string;
+  summary: string;
+  sources?: SourceRef[];
+}> {
+  const tool = getTool(job.name);
+  if (!tool) throw new Error(`unknown tool ${job.name}`);
+  if (job.kind === 'search') {
+    const r = (await tool.execute({ query: job.arg1 })) as { results?: unknown };
+    const items = (Array.isArray(r?.results) ? r.results : []).slice(0, 3).map((x) => {
+      const o = (x ?? {}) as Record<string, unknown>;
+      return {
+        title: String(o.title ?? 'Result'),
+        url: typeof o.url === 'string' && o.url ? o.url : undefined,
+        snippet: String(o.snippet ?? ''),
+      };
+    });
+    if (items.length === 0)
+      return { text: 'no results found', summary: `searched "${job.arg1}" — nothing found` };
+    return {
+      text: items.map((i) => `${i.title}: ${i.snippet}`).join('\n'),
+      summary: `searched "${job.arg1}"`,
+      sources: items.map((i) => ({ title: i.title, url: i.url })),
+    };
+  }
+  if (job.kind === 'weather') {
+    const r = (await tool.execute({ location: job.arg1 })) as Record<string, unknown>;
+    if (typeof r.error === 'string') throw new Error(r.error);
+    const place = String(r.place ?? job.arg1);
+    const text =
+      `${place}: ${String(r.temp ?? '?')}°C, ${String(r.condition ?? 'unknown')}` +
+      (r.high !== undefined ? ` (high ${String(r.high)}, low ${String(r.low)})` : '');
+    return { text, summary: `weather for ${place}` };
+  }
+  if (job.kind === 'reminder') {
+    const r = (await tool.execute({ text: job.arg1, when: job.arg2 })) as {
+      at?: unknown;
+      text?: unknown;
+    };
+    const at = typeof r.at === 'number' ? r.at : Date.now();
+    return {
+      text: `reminder "${String(r.text ?? job.arg1)}" set for ${describeWhen(at)}`,
+      summary: 'reminder set',
+    };
+  }
+  const r = (await tool.execute({ title: job.arg1, when: job.arg2 })) as {
+    at?: unknown;
+    title?: unknown;
+  };
+  const at = typeof r.at === 'number' ? r.at : Date.now();
+  return {
+    text: `event "${String(r.title ?? job.arg1)}" saved for ${describeWhen(at)}`,
+    summary: 'event saved',
+  };
+}
 
 /**
  * Conversation engine — the only place that orchestrates
@@ -75,13 +188,29 @@ export function useConversationEngine() {
     useMayaStore.getState().setActivity('speaking');
     useConversationStore.getState().setConvState('speaking');
     useMayaStore.getState().setTtsActive(true);
+    const myAbort = abortRef.current;
+    const cancelled = () =>
+      abortRef.current !== myAbort || (myAbort?.signal.aborted ?? false);
     try {
-      await textToSpeech.speak(text, {
-        rate: s.voice.speed * ve.speed,
-        pitch: s.voice.pitch * ve.pitch,
-        voiceId: s.voice.voiceId || undefined,
-        emotion: ve,
-      });
+      if ((s.voice.voiceId || '') === 'gateway') {
+        // Cloud voice: sentence MP3s from the gateway, real output levels.
+        // Falls back to system TTS when the gateway has no voice configured.
+        const played = await speakViaGateway(text, cancelled);
+        if (!played) {
+          await textToSpeech.speak(text, {
+            rate: s.voice.speed * ve.speed,
+            pitch: s.voice.pitch * ve.pitch,
+            emotion: ve,
+          });
+        }
+      } else {
+        await textToSpeech.speak(text, {
+          rate: s.voice.speed * ve.speed,
+          pitch: s.voice.pitch * ve.pitch,
+          voiceId: s.voice.voiceId || undefined,
+          emotion: ve,
+        });
+      }
     } finally {
       speakingRef.current = false;
       useMayaStore.getState().setTtsActive(false);
@@ -97,9 +226,9 @@ export function useConversationEngine() {
   }, []);
 
   const processTurn = useCallback(
-    async (rawText: string) => {
+    async (rawText: string, images: string[] = []) => {
       const text = rawText.trim();
-      if (!text || processingRef.current) return;
+      if ((!text && images.length === 0) || processingRef.current) return;
       processingRef.current = true;
       abortRef.current?.abort();
       const abort = new AbortController();
@@ -109,8 +238,16 @@ export function useConversationEngine() {
       let activeId = st.activeId;
       if (!activeId) activeId = st.newConversation();
 
-      // User message
-      st.appendMessage({ conversationId: activeId, role: 'user', text });
+      // User message (with attached images for multimodal models)
+      const cleanImages = images
+        .filter((u) => typeof u === 'string' && u.startsWith('data:image/'))
+        .slice(0, 3);
+      st.appendMessage({
+        conversationId: activeId,
+        role: 'user',
+        text,
+        ...(cleanImages.length > 0 ? { images: cleanImages } : {}),
+      });
       st.setPartialUser('');
       st.setPartialMaya('');
       st.setConvState('processing');
@@ -137,6 +274,7 @@ export function useConversationEngine() {
 
       try {
         const ctx = buildContext(activeId);
+        if (cleanImages.length > 0) ctx.images = cleanImages;
         const stream = provider.sendMessage(text, ctx);
 
         let full = '';
@@ -150,10 +288,52 @@ export function useConversationEngine() {
           if (ch.mayaState) useMayaStore.getState().setAvatarOverride(ch.mayaState);
           if (ch.done) break;
         }
-        const finalText = full.trim() || "Hmm — I lost that thought. Say it once more?";
+        // Tool rounds: the model may request searches, weather, reminders or
+        // events via [TAG: ...] markers. Execute (max 2 rounds), strip the
+        // markers from what the user sees, then answer with the results.
+        let finalText = full.trim() || 'Hmm — I lost that thought. Say it once more?';
+        const allSources: SourceRef[] = [];
+        const toolCalls: ToolCallRecord[] = [];
+        for (let round = 0; round < 2 && !abort.signal.aborted; round++) {
+          const jobs = extractToolJobs(finalText);
+          if (jobs.length === 0) break;
+          finalText = finalText.replace(TOOL_TAG_RE, '').trim();
+          const resultLines: string[] = [];
+          for (const job of jobs.slice(0, 3)) {
+            try {
+              const r = await runToolJob(job);
+              resultLines.push(`${r.summary} → ${r.text}`);
+              if (r.sources) allSources.push(...r.sources);
+              toolCalls.push({ name: job.name, summary: r.summary });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'failed';
+              resultLines.push(`${job.name} unavailable (${msg})`);
+              toolCalls.push({ name: job.name, summary: 'failed' });
+            }
+          }
+          const followCtx = buildContext(activeId);
+          const now = Date.now();
+          const followMsgs: ChatMessage[] = [
+            ...followCtx.recentMessages.slice(-8),
+            { id: crypto.randomUUID(), conversationId: activeId, role: 'user', text, timestamp: now },
+            {
+              id: crypto.randomUUID(), conversationId: activeId, role: 'assistant',
+              text: finalText || '(thinking)', timestamp: now,
+            },
+            {
+              id: crypto.randomUUID(), conversationId: activeId, role: 'user',
+              text: `Tool results — answer the user now, briefly, in their language, with no [TAG: ...] markers:\n${resultLines.join('\n')}`,
+              timestamp: now,
+            },
+          ];
+          const follow = await provider.generateResponse(followMsgs, followCtx);
+          if (follow.text.trim()) finalText = follow.text.trim();
+        }
         useConversationStore.getState().updateMessage(placeholder.id, {
           text: finalText,
           partial: false,
+          ...(allSources.length > 0 ? { sources: allSources } : {}),
+          ...(toolCalls.length > 0 ? { toolCalls } : {}),
         });
         useConversationStore.getState().setPartialMaya('');
         useMayaStore.getState().setAvatarOverride(null);
@@ -161,6 +341,7 @@ export function useConversationEngine() {
         await speak(finalText);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Request failed';
+        if (/401|unauthorized/i.test(message)) useAuthStore.getState().logout();
         useConversationStore.getState().updateMessage(placeholder.id, {
           text: 'I lost the connection for a moment. Try again?',
           partial: false,
@@ -235,7 +416,23 @@ export function useConversationEngine() {
     useMayaStore.getState().setActivity('listening');
     speechToText.start(
       {
-        onPartial: (t) => useConversationStore.getState().setPartialUser(t),
+        onPartial: (t) => {
+          useConversationStore.getState().setPartialUser(t);
+          // Beta wake word: while the mic is on but Maya is idle, hearing
+          // "hey maya" switches her to listening (uses live transcription).
+          const s = settingsRef.current;
+          if (
+            s.conversation.wakeWord &&
+            !speakingRef.current &&
+            !processingRef.current &&
+            /\b(hey maya|ok maya|okay maya)\b/i.test(t)
+          ) {
+            speechToText.consumeFinals();
+            useConversationStore.getState().setPartialUser('');
+            useConversationStore.getState().setConvState('listening');
+            useMayaStore.getState().setActivity('listening');
+          }
+        },
         onFinal: (t) => useConversationStore.getState().setPartialUser(t),
         onError: (m) => {
           if (m !== 'no-speech' && m !== 'aborted')
@@ -280,16 +477,14 @@ export function useConversationEngine() {
     const s = settingsRef.current;
     if (s.voiceMode !== 'auto' || !s.audio.vadEnabled) return;
     if (speakingRef.current || processingRef.current) return;
+    // Continuous mode: the recognizer keeps running across turns (no
+    // stop/start churn) — consume what finalized since the last send.
     const t =
-      speechToText.lastTranscript ||
+      speechToText.consumeFinals() ||
       useConversationStore.getState().partialUser.trim();
-    // In auto mode with Web Speech continuous dictation, finals arrive via
-    // onFinal; VAD end is the nudge to send what we have.
     if (t.trim().length > 1) {
-      const frozen = speechToText.stop();
       useConversationStore.getState().setPartialUser('');
-      void processTurn(frozen || t);
-      // Resume listening after the turn completes (speak() restores state).
+      void processTurn(t);
     }
   }, [processTurn]);
 

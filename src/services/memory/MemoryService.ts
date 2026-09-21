@@ -44,6 +44,23 @@ function keywords(text: string): string[] {
     .slice(0, 24);
 }
 
+/** Term-frequency vector over content words. Pure — unit-tested. */
+export function termVector(text: string): Map<string, number> {
+  const vec = new Map<string, number>();
+  for (const w of keywords(text)) vec.set(w, (vec.get(w) ?? 0) + 1);
+  return vec;
+}
+
+/** IDF-weighted Euclidean norm for cosine similarity. */
+export function weightedNorm(vec: Map<string, number>, idf: (t: string) => number): number {
+  let sum = 0;
+  for (const [t, tf] of vec) {
+    const w = tf * idf(t);
+    sum += w * w;
+  }
+  return Math.sqrt(sum);
+}
+
 export class MemoryService {
   private items: Memory[] = load();
 
@@ -51,21 +68,35 @@ export class MemoryService {
     return [...this.items].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  /** Lexical relevance ranking (local stand-in for vector retrieval). */
+  /** TF-IDF cosine ranking over memory texts (local semantic-lite retrieval). */
   retrieve(query: string, limit = 6): Memory[] {
-    const keys = new Set(keywords(query));
-    if (keys.size === 0) return this.items.slice(0, limit);
-    const scored = this.items.map((m) => {
-      const hay = `${m.key} ${m.value}`.toLowerCase();
-      let score = 0;
-      for (const k of keys) if (hay.includes(k)) score += 2;
-      // Recency + confidence priors.
+    const qvec = termVector(query);
+    if (qvec.size === 0) return this.items.slice(0, limit);
+    const docs = this.items.map((m) => ({
+      m,
+      vec: termVector(`${m.key} ${m.value} ${m.type}`),
+    }));
+    const df = new Map<string, number>();
+    for (const d of docs) {
+      for (const t of d.vec.keys()) df.set(t, (df.get(t) ?? 0) + 1);
+    }
+    const n = Math.max(1, docs.length);
+    const idf = (t: string): number => Math.log(1 + n / (1 + (df.get(t) ?? 0)));
+    const qnorm = weightedNorm(qvec, idf);
+    const scored = docs.map(({ m, vec }) => {
+      let dot = 0;
+      for (const [t, tf] of vec) {
+        const qtf = qvec.get(t);
+        if (qtf !== undefined) dot += tf * qtf * idf(t) ** 2;
+      }
+      const dnorm = weightedNorm(vec, idf);
+      const cos = qnorm > 0 && dnorm > 0 ? dot / (qnorm * dnorm) : 0;
+      // Confidence + gentle recency priors keep ranking stable, not jumpy.
       const ageDays = (Date.now() - m.lastAccessedAt) / 86_400_000;
-      score += m.confidence - Math.min(1, ageDays / 60);
-      return { m, score };
+      return { m, score: cos * 2 + m.confidence * 0.3 - Math.min(0.3, ageDays / 200) };
     });
     const out = scored
-      .filter((s) => s.score > 0.2)
+      .filter((s) => s.score > 0.05)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
       .map((s) => s.m);

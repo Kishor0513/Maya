@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { AppSettings } from '../types';
 
 const DEFAULTS: AppSettings = {
-  appearance: { theme: 'dark', ambientEffects: true, animations: true },
+  appearance: { theme: 'dark', ambientEffects: true, animations: true, accent: 'violet', avatarStyle: 'orb' },
   voice: { voiceId: '', speed: 1.02, pitch: 1, expressiveness: 0.7, autoPlay: true },
   audio: { vadEnabled: true, vadSensitivity: 0.65, silenceMs: 800 },
   ai: {
@@ -12,7 +12,7 @@ const DEFAULTS: AppSettings = {
     endpoint: '',
     language: 'auto',
   },
-  conversation: { autoListen: true, allowInterrupt: true, autoPlayResponses: true },
+  conversation: { autoListen: true, allowInterrupt: true, autoPlayResponses: true, wakeWord: false },
   privacy: { storeConversations: true, memoryEnabled: true },
   voiceMode: 'auto',
   userName: '',

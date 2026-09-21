@@ -8,14 +8,31 @@ state in sync.
 
 ```text
 Browser (React + TS + Tailwind + Web Audio)
- ├── Microphone → VAD → STT (Web Speech live partials)
- ├── AI provider abstraction (demo / backend-proxied OpenAI-compatible / custom)
- ├── Streaming text + system TTS (pluggable provider audio.chunk path)
+ ├── Microphone → VAD → continuous STT (no restarts) → wake word ("hey maya")
+ ├── Single brain: Google Gemini via backend gateway (images supported)
+ ├── Tool loop: [SEARCH]/[WEATHER]/[REMINDER]/[EVENT] → execute → answer
+ ├── Streaming text + system TTS or gateway cloud voice (MP3 chunks)
  ├── Realtime transport (WebSocketClient w/ reconnect + normalized RealtimeEvent)
- ├── Memory (local-first + backend sync surface, lexical retrieval)
+ ├── Memory: local-first + sqlite-backed gateway sync, TF-IDF cosine retrieval
+ ├── Knowledge docs (RAG): passages injected server-side into context
  ├── Emotion + relationship drift models → avatar / voice mapping
  └── Conversation state machine (disconnected … speaking … interrupted)
 ```
+
+## What Maya can do
+
+- **Talk or type** — auto conversation (VAD), push-to-talk, manual, full chat thread
+- **Real answers with tools** — web search (Wikipedia/DDG), live weather (Open-Meteo),
+  spoken reminders, local calendar events; sources shown under replies
+- **See images** — attach photos in chat; the model grounds answers in them
+- **Remember** — long-term memory (inspect/edit/forget) + knowledge documents
+  with retrieval, per-user when accounts are enabled
+- **Sound like herself** — system voice (female auto-pick) or cloud voice,
+  emotion-mapped rate/pitch, interruption-safe playback
+- **Express** — state-driven avatar (orb/halo/prism × violet/ocean/ember),
+  real-amplitude waveform, typing indicator, streaming text
+- **Privacy controls** — login gate on shared servers, export chats (Markdown/JSON),
+  mic/storage/memory status, PWA installable
 
 No vendor secrets in the frontend. The browser talks to **your backend
 gateway** (`/api/*`, `WS /api/realtime`), which holds provider keys, runs the
@@ -68,8 +85,15 @@ POST /api/conversations        GET /api/conversations
 GET  /api/conversations/:id    DELETE /api/conversations/:id
 GET  /api/memories             POST /api/memories
 PATCH /api/memories/:id        DELETE /api/memories/:id
-POST /api/chat                 → { text }
+GET  /api/documents            POST /api/documents {title, text}
+DELETE /api/documents/:id
+POST /api/chat                 → { text }            (RAG notes injected)
 POST /api/chat/stream          → SSE  data: {"delta": "…"} … data: [DONE]
+POST /api/tools/web_search     {query} → { results: [{title, url, snippet}] }
+POST /api/tools/weather        {location|lat,lon} → { place, temp, condition, … }
+POST /api/tts                  {text} → { audios: [base64 mp3…] }
+POST /api/login                {username, password} → { token, user } (USERS set)
+GET  /api/health               → { ok, model, base, key, auth, db }
 WS   /api/realtime             ↔ normalized frames (see below)
 ```
 
@@ -87,32 +111,43 @@ recent messages + summary + retrieved memories + emotion/relationship state.
 ## Voice setup
 
 - Auto conversation (default): mic on → VAD detects speech start/end → sends
-  after `silenceMs`. Interrupting Maya while she speaks stops TTS immediately.
+  after `silenceMs`. Recognition runs continuously (no restarts); interrupting
+  Maya while she speaks stops TTS immediately.
 - Push-to-talk: hold the orb (or Space when focused).
 - Manual: tap to start/stop recording, then send.
+- Wake word (beta, Settings): while the mic is on, "hey maya" switches her to listening.
+- Voice (Settings): system voice with female auto-pick, or cloud voice (gateway MP3).
 - Chrome/Edge have the best Web Speech STT; Safari/Firefox fall back to
   recorder + server STT via `audio.chunk`.
 
 ## Memory setup
 
 Local-first in `localStorage` (`maya.memories.v1`); syncs to `/api/memories`
-when reachable. Retrieval is lexical on-device (stand-in for vector search —
-swap the backend to embeddings + vector DB without touching the UI).
-Memory panel supports inspect / edit / forget / disable / clear-all.
-Extraction deliberately stores one non-sensitive fact per turn max.
+when reachable. Retrieval is TF-IDF cosine on-device. The gateway persists to
+sqlite (`./data/maya.db`, FTS-indexed) with JSON fallback, scoped per user when
+accounts are enabled. Knowledge documents (`Knowledge` panel) are chunked and
+retrieved server-side into the model's context. Memory panel supports inspect /
+edit / forget / disable / clear-all. Extraction deliberately stores one
+non-sensitive fact per turn max.
+
+Set `USERS="alice:pw1,bob:pw2"` on the gateway for multi-user login (home-grade
+plaintext; production wants OAuth/DB). The app shows a sign-in gate automatically.
 
 ## Project layout
 
 ```text
 src/app/            App shell, providers, view router
-src/components/     avatar · waveform · voice · chat · settings · sidebar · memory · common
-src/features/       conversation state machine · personality/emotion engine
-src/services/       ai · speech · audio · realtime · memory · tools
+src/components/     avatar · waveform · voice · chat · settings · sidebar · memory · plans · common
+src/features/       conversation state machine · personality/emotion engine · appearance accents
+src/services/       ai · speech · audio · realtime · memory · tools · gateway client
 src/hooks/          useConversation (engine) · useVoiceActivity · useRealtime · useMicrophone · useAudioAnalyzer
-src/stores/         zustand: conversation · settings · maya · voice
+src/stores/         zustand: conversation · settings · maya · voice · auth
 src/types/          strict domain types (no any)
-src/utils/          formatting, capability checks
-src/test/           vitest: machine, emotion, events, prompt, memory
+src/utils/          formatting, capability checks, chat export
+src/test/           vitest: machine, emotion, events, prompt, memory, tools, gateway
+server/             zero-dep gateway: chat/stream, memory+docs store (sqlite/JSON),
+                    tools (search/weather/tts), multi-user auth, static app serving
+public/             PWA manifest + offline service worker + icon
 ```
 
 ## Scripts
@@ -128,8 +163,11 @@ npm run test      # vitest run
 ## Security notes
 
 - Never put provider keys in `VITE_*` vars — they ship to the browser.
-- Authenticate WS (`session.start` + token), validate `userId`/ownership
-  server-side, enforce CORS/origin checks, request size limits, rate limits.
+- Set `GATEWAY_TOKEN` (+ baked `VITE_GATEWAY_TOKEN`) before exposing the gateway;
+  set `USERS` for multi-user login. Validate ownership server-side (done for
+  memories/documents via token-derived owners — never trust client claims).
+- Authenticate WS (`session.start` + token), enforce CORS/origin checks
+  (`ALLOWED_ORIGIN`), request size limits, rate limits.
 - Privacy panel shows mic / storage / memory status and honors deletions.
 
 ## Production deployment

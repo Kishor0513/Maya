@@ -1,35 +1,45 @@
 import { useMemo } from 'react';
 import type { MayaAvatarProps, MayaState } from '../../types';
 import { cx } from '../../utils/format';
+import { ACCENTS } from '../../features/appearance/accents';
 
 /**
- * MayaAvatar — layered CSS/canvas avatar, deterministic from props.
- * Base portrait (gradient orb) + ambient glow + breathing + state + emotion.
+ * MayaAvatar — layered avatar, deterministic from props.
+ * State drives mood (glow strength, dimming, motion); the accent theme
+ * drives hue; the variant drives geometry (orb / halo / prism).
  */
-export function MayaAvatar({ state, inputLevel, outputLevel, emotion }: MayaAvatarProps) {
+export function MayaAvatar({
+  state,
+  inputLevel,
+  outputLevel,
+  emotion,
+  accent = 'violet',
+  variant = 'orb',
+}: MayaAvatarProps) {
+  const A = ACCENTS[accent] ?? ACCENTS.violet;
   const level = state === 'listening' ? inputLevel : state === 'speaking' ? outputLevel : 0;
 
-  const palette = useMemo(() => {
+  const mood = useMemo(() => {
     switch (state) {
       case 'happy':
       case 'excited':
       case 'playful':
-        return { a: '#F9A8D4', b: '#C4B5FD', glow: 'rgba(249,168,212,0.5)', dim: 1 };
+        return { a: A.b, b: A.a, glow: A.glow, dim: 1 };
       case 'sad':
         return { a: '#64748B', b: '#475569', glow: 'rgba(100,116,139,0.35)', dim: 0.72 };
       case 'concerned':
-        return { a: '#FDA4AF', b: '#A78BFA', glow: 'rgba(253,164,175,0.4)', dim: 0.9 };
+        return { a: A.b, b: '#A78BFA', glow: A.glow, dim: 0.9 };
       case 'curious':
       case 'processing':
-        return { a: '#93C5FD', b: '#C4B5FD', glow: 'rgba(147,197,253,0.45)', dim: 0.95 };
+        return { a: '#93C5FD', b: A.a, glow: 'rgba(147,197,253,0.45)', dim: 0.95 };
       case 'listening':
-        return { a: '#DDD6FE', b: '#F9A8D4', glow: 'rgba(196,181,253,0.55)', dim: 1 };
+        return { a: '#DDD6FE', b: A.b, glow: A.glow, dim: 1 };
       case 'speaking':
-        return { a: '#C4B5FD', b: '#F0ABFC', glow: 'rgba(196,181,253,0.6)', dim: 1 };
+        return { a: A.a, b: A.b, glow: A.glow, dim: 1 };
       default:
-        return { a: '#B9A8F9', b: '#7C7C9A', glow: 'rgba(196,181,253,0.35)', dim: 0.92 };
+        return { a: A.a, b: '#7C7C9A', glow: A.glow, dim: 0.92 };
     }
-  }, [state]);
+  }, [state, A]);
 
   const animDuration = useMemo(() => {
     if (state === 'excited') return '1.6s';
@@ -41,12 +51,19 @@ export function MayaAvatar({ state, inputLevel, outputLevel, emotion }: MayaAvat
   const scale = 1 + Math.min(0.5, level) * (state === 'excited' ? 0.16 : 0.09);
   const warmth = emotion.affection > 0.6 ? 0.25 : 0;
 
+  const coreBackground =
+    variant === 'prism'
+      ? `conic-gradient(from 40deg, ${mood.a}, ${mood.b}, #1c1c28, ${mood.b}, ${mood.a})`
+      : variant === 'halo'
+        ? `radial-gradient(circle at 50% 42%, ${mood.a}, ${mood.b} 55%, #1a1a24 100%)`
+        : `conic-gradient(from 120deg, ${mood.a}, ${mood.b}, #2A2A35, ${mood.a})`;
+
   return (
     <div
       role="img"
       aria-label={`Maya is ${state}`}
       className="relative mx-auto h-56 w-56 select-none sm:h-64 sm:w-64"
-      style={{ opacity: palette.dim }}
+      style={{ opacity: mood.dim }}
     >
       {/* Ambient glow */}
       <div
@@ -56,7 +73,7 @@ export function MayaAvatar({ state, inputLevel, outputLevel, emotion }: MayaAvat
           state === 'processing' && 'animate-pulseGlow',
         )}
         style={{
-          background: `radial-gradient(circle at 50% 45%, ${palette.glow}, transparent 65%)`,
+          background: `radial-gradient(circle at 50% 45%, ${mood.glow}, transparent 65%)`,
           opacity: 0.55 + Math.min(0.45, level * 1.4),
           transform: `scale(${0.95 + Math.min(0.4, level) * 0.5})`,
         }}
@@ -68,12 +85,19 @@ export function MayaAvatar({ state, inputLevel, outputLevel, emotion }: MayaAvat
         style={{ animationDuration: animDuration }}
       >
         <div
-          className="absolute inset-[6%] rounded-full transition-transform duration-300"
+          className={cx(
+            'absolute rounded-full transition-transform duration-300',
+            variant === 'halo' ? 'inset-[14%]' : 'inset-[6%]',
+            variant === 'prism' && 'maya-spin-slow',
+          )}
           style={{
             transform: `scale(${scale})`,
-            background: `conic-gradient(from 120deg, ${palette.a}, ${palette.b}, #2A2A35, ${palette.a})`,
+            background: coreBackground,
+            ...(variant === 'prism'
+              ? { animation: 'maya-spin 26s linear infinite' }
+              : undefined),
             filter: `saturate(${1 + warmth})`,
-            boxShadow: `0 0 90px -18px ${palette.glow}, inset 0 0 60px rgba(0,0,0,0.55)`,
+            boxShadow: `0 0 90px -18px ${mood.glow}, inset 0 0 60px rgba(0,0,0,0.55)`,
           }}
         />
         {/* Inner portrait light */}
@@ -86,15 +110,23 @@ export function MayaAvatar({ state, inputLevel, outputLevel, emotion }: MayaAvat
           }}
         />
         {/* Speaking ripple rings */}
-        {(state === 'speaking' || state === 'excited') && (
+        {(state === 'speaking' || state === 'excited' || variant === 'halo') && (
           <div
             aria-hidden
             className="absolute inset-[2%] rounded-full border"
             style={{
-              borderColor: 'rgba(255,255,255,0.18)',
+              borderColor: variant === 'halo' ? mood.a : 'rgba(255,255,255,0.18)',
+              opacity: variant === 'halo' ? 0.7 : 0.4 + level,
               transform: `scale(${1 + Math.min(0.4, level) * 0.35})`,
-              opacity: 0.4 + level,
+              ...(variant === 'halo' ? { borderWidth: 2 } : undefined),
             }}
+          />
+        )}
+        {variant === 'halo' && (
+          <div
+            aria-hidden
+            className="absolute inset-[-4%] rounded-full border"
+            style={{ borderColor: mood.b, opacity: 0.3 }}
           />
         )}
         {/* Listening brighten */}

@@ -33,8 +33,12 @@ body {
   z-index: 1;
 }
 
+@keyframes maya-spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-breathe, .animate-pulseGlow {
+  .animate-breathe, .animate-pulseGlow, .maya-spin-slow {
     animation: none !important;
   }
 }

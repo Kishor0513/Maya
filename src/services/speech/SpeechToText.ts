@@ -28,11 +28,42 @@ function getRecognitionCtor(): (new () => Recog) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+/**
+ * TranscriptBuffer — accumulates final transcripts with an explicit consume
+ * point, so continuous recognition can run across turns without restarts.
+ * Pure logic, unit-tested.
+ */
+export class TranscriptBuffer {
+  private finals: string[] = [];
+  private consumed = 0;
+
+  pushFinal(text: string): void {
+    const t = text.trim();
+    if (t) this.finals.push(t);
+  }
+
+  /** Everything finalized since the last consume(). */
+  peek(): string {
+    return this.finals.slice(this.consumed).join(' ').trim();
+  }
+
+  consume(): string {
+    const out = this.peek();
+    this.consumed = this.finals.length;
+    return out;
+  }
+
+  reset(): void {
+    this.finals = [];
+    this.consumed = 0;
+  }
+}
+
 export class SpeechToText {
   private recog: Recog | null = null;
   private listening = false;
   private wantStop = false;
-  private lastFinal = '';
+  private buffer = new TranscriptBuffer();
   private chunks: Blob[] = [];
   private recorder: MediaRecorder | null = null;
 
@@ -45,7 +76,16 @@ export class SpeechToText {
   }
 
   get lastTranscript(): string {
-    return this.lastFinal;
+    return this.buffer.peek();
+  }
+
+  /** Finals since the last consume — the continuous-mode send primitive. */
+  consumeFinals(): string {
+    return this.buffer.consume();
+  }
+
+  peekFinals(): string {
+    return this.buffer.peek();
   }
 
   start(cb: SttCallbacks, lang = 'en-US'): boolean {
@@ -56,7 +96,7 @@ export class SpeechToText {
     }
     this.stop();
     this.wantStop = false;
-    this.lastFinal = '';
+    this.buffer.reset();
     const r = new Ctor();
     r.lang = lang;
     r.interimResults = true;
@@ -71,13 +111,13 @@ export class SpeechToText {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
         if (res.isFinal) {
-          this.lastFinal += res[0].transcript;
-          cb.onFinal?.(this.lastFinal.trim());
+          this.buffer.pushFinal(res[0].transcript);
+          cb.onFinal?.(this.buffer.peek());
         } else {
           interim += res[0].transcript;
         }
       }
-      if (interim) cb.onPartial?.((this.lastFinal + interim).trim());
+      if (interim) cb.onPartial?.(`${this.buffer.peek()} ${interim}`.trim());
     };
     r.onerror = (ev: unknown) => {
       const e = ev as { error?: string };
@@ -115,7 +155,7 @@ export class SpeechToText {
       /* noop */
     }
     this.listening = false;
-    const out = this.lastFinal.trim();
+    const out = this.buffer.consume();
     this.recog = null;
     return out;
   }

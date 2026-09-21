@@ -11,12 +11,17 @@ export function AudioWaveform({
   state,
   bars = 48,
   className = '',
+  from = '249,168,212',
+  to = '196,181,253',
 }: {
   inputLevel: number;
   outputLevel: number;
   state: ConversationState;
   bars?: number;
   className?: string;
+  /** 'r,g,b' triplets so accent themes can recolor the bars. */
+  from?: string;
+  to?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const envRef = useRef<number[]>([]);
@@ -68,8 +73,8 @@ export function AudioWaveform({
         const warmth = st === 'speaking' ? 1 : st === 'listening' ? 0.6 : 0.25;
         const alpha = 0.22 + env[i] * 0.78;
         const grad = ctx.createLinearGradient(0, y, 0, y + h);
-        grad.addColorStop(0, `rgba(249,168,212,${alpha * (0.5 + warmth * 0.5)})`);
-        grad.addColorStop(1, `rgba(196,181,253,${alpha})`);
+        grad.addColorStop(0, `rgba(${from},${alpha * (0.5 + warmth * 0.5)})`);
+        grad.addColorStop(1, `rgba(${to},${alpha})`);
         ctx.fillStyle = grad;
         ctx.beginPath();
         const r = Math.min(bw / 2, 4);
@@ -84,7 +89,7 @@ export function AudioWaveform({
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', resize);
     };
-  }, [bars]);
+  }, [bars, from, to]);
 
   return (
     <div className={className} aria-hidden>
