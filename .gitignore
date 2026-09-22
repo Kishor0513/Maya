@@ -7,6 +7,10 @@ server/.env
 # gateway data (sqlite + JSON fallback hold real user content)
 data/
 
+# test artifacts
+test-results/
+playwright-report/
+
 # tsc build artifacts (composite node config emits these next to source)
 vite.config.js
 vite.config.d.ts

@@ -128,6 +128,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             onChange={(v) => s.updateNested('conversation', { allowInterrupt: v })} />
           <Toggle label="Auto-play voice responses" checked={s.conversation.autoPlayResponses}
             onChange={(v) => { s.updateNested('conversation', { autoPlayResponses: v }); s.updateNested('voice', { autoPlay: v }); }} />
+          <Toggle label="Speak sentences as they stream in" checked={s.conversation.streamSpeech !== false}
+            onChange={(v) => s.updateNested('conversation', { streamSpeech: v })} />
           <Toggle label="Wake word “hey maya” (beta, while mic is on)" checked={s.conversation.wakeWord}
             onChange={(v) => s.updateNested('conversation', { wakeWord: v })} />
           <div className="mt-3">

@@ -117,6 +117,7 @@ recent messages + summary + retrieved memories + emotion/relationship state.
 - Manual: tap to start/stop recording, then send.
 - Wake word (beta, Settings): while the mic is on, "hey maya" switches her to listening.
 - Voice (Settings): system voice with female auto-pick, or cloud voice (gateway MP3).
+  Replies start speaking sentence-by-sentence as they stream (toggleable).
 - Chrome/Edge have the best Web Speech STT; Safari/Firefox fall back to
   recorder + server STT via `audio.chunk`.
 
@@ -128,7 +129,8 @@ sqlite (`./data/maya.db`, FTS-indexed) with JSON fallback, scoped per user when
 accounts are enabled. Knowledge documents (`Knowledge` panel) are chunked and
 retrieved server-side into the model's context. Memory panel supports inspect /
 edit / forget / disable / clear-all. Extraction deliberately stores one
-non-sensitive fact per turn max.
+non-sensitive fact per turn max (heuristic instantly, LLM pass in the
+background with secrets blocklisted).
 
 Set `USERS="alice:pw1,bob:pw2"` on the gateway for multi-user login (home-grade
 plaintext; production wants OAuth/DB). The app shows a sign-in gate automatically.
@@ -157,7 +159,8 @@ npm run dev       # local dev
 npm run build     # typecheck + production build
 npm run preview   # serve dist
 npm run lint      # eslint (no any, strict hooks)
-npm run test      # vitest run
+npm run test      # vitest run (29 unit tests)
+npm run test:e2e  # build + Playwright happy-path in system Chrome (stubbed brain)
 ```
 
 ## Security notes
@@ -169,6 +172,9 @@ npm run test      # vitest run
 - Authenticate WS (`session.start` + token), enforce CORS/origin checks
   (`ALLOWED_ORIGIN`), request size limits, rate limits.
 - Privacy panel shows mic / storage / memory status and honors deletions.
+- Rate limits are enforced in-gateway (120/min per IP, 10/min for login, 429s).
+- Prefer scrypt file accounts (`node server/add-user.js <name> <pw>`) over `USERS`
+  plaintext; sessions expire after 30 days.
 
 ## Production deployment
 

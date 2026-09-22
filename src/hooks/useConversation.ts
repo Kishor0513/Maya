@@ -5,14 +5,15 @@ import { textToSpeech, emotionToVoice } from '../services/speech/TextToSpeech';
 import { OpenAICompatibleProvider } from '../services/ai/OpenAIProvider';
 import type { AIProvider } from '../services/ai/AIProvider';
 import { memoryService } from '../services/memory/MemoryService';
-import { resolveChatBase } from '../services/gateway';
+import { resolveChatBase, gatewayHeaders } from '../services/gateway';
 import { useConversationStore } from '../stores/conversationStore';
 import { useSettingsStore, sttLang } from '../stores/settingsStore';
 import { useMayaStore } from '../stores/mayaStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useAuthStore } from '../stores/authStore';
 import { getTool, describeWhen, callGatewayTool } from '../services/tools/MayaTools';
-import type { ChatMessage, ConversationContext, SourceRef, ToolCallRecord } from '../types';
+import type { ChatMessage, ConversationContext, Memory, SourceRef, ToolCallRecord } from '../types';
+import { nextSpeakable } from '../utils/speechChunks';
 
 /**
  * Play gateway TTS sentence audio sequentially. Returns false so the caller
@@ -125,6 +126,46 @@ async function runToolJob(job: ToolJob): Promise<{
   };
 }
 
+/** Server-side semantic memories (embedding cosine), best-effort. */
+async function fetchSemanticMemories(query: string): Promise<Memory[]> {
+  try {
+    const base = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';
+    const res = await fetch(`${base}/api/memories/search?q=${encodeURIComponent(query.slice(0, 200))}`, {
+      headers: gatewayHeaders(),
+      credentials: 'include',
+    });
+    if (!res.ok) return [];
+    const arr = (await res.json()) as unknown;
+    if (!Array.isArray(arr)) return [];
+    const out: Memory[] = [];
+    for (const x of arr) {
+      const o = (x ?? {}) as Record<string, unknown>;
+      if (typeof o.id !== 'string' || typeof o.key !== 'string' || typeof o.value !== 'string') continue;
+      out.push({
+        id: o.id,
+        type: 'fact',
+        key: o.key,
+        value: o.value,
+        confidence: typeof o.confidence === 'number' ? o.confidence : 0.7,
+        sourceConversationId: typeof o.sourceConversationId === 'string' ? o.sourceConversationId : undefined,
+        createdAt: typeof o.createdAt === 'number' ? o.createdAt : Date.now(),
+        updatedAt: typeof o.updatedAt === 'number' ? o.updatedAt : Date.now(),
+        lastAccessedAt: Date.now(),
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function validMemoryType(t: unknown): Memory['type'] {
+  return t === 'profile' || t === 'preference' || t === 'project' || t === 'interest' ||
+    t === 'person' || t === 'event' || t === 'goal' || t === 'fact'
+    ? t
+    : 'fact';
+}
+
 /**
  * Conversation engine — the only place that orchestrates
  * mic → STT → provider → streaming text → TTS → avatar/memory.
@@ -138,6 +179,7 @@ export function useConversationEngine() {
   const abortRef = useRef<AbortController | null>(null);
   const speakingRef = useRef(false);
   const processingRef = useRef(false);
+  const spokenRef = useRef(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -154,17 +196,32 @@ export function useConversationEngine() {
   }, [settings.ai.endpoint, settings.ai.model]);
 
   const buildContext = useCallback(
-    (sessionId: string): ConversationContext => {
+    async (sessionId: string): Promise<ConversationContext> => {
       const st = useConversationStore.getState();
       const active = st.activeConversation();
       const recent = (active?.messages ?? []).slice(-12);
       const lastUser = [...recent].reverse().find((m) => m.role === 'user');
+      const local = settingsRef.current.privacy.memoryEnabled
+        ? memoryService.retrieve(lastUser?.text ?? '', 6)
+        : [];
+      // Blend local TF-IDF memories with server-side embedding matches.
+      let relevantMemories = local;
+      const query = lastUser?.text ?? '';
+      if (settingsRef.current.privacy.memoryEnabled && query.trim().length > 2) {
+        try {
+          const remote = await fetchSemanticMemories(query);
+          if (remote.length > 0) {
+            const seen = new Set(local.map((m) => m.id));
+            relevantMemories = [...local, ...remote.filter((m) => !seen.has(m.id))].slice(0, 6);
+          }
+        } catch {
+          /* local memories suffice */
+        }
+      }
       return {
         sessionId,
         recentMessages: recent,
-        relevantMemories: settingsRef.current.privacy.memoryEnabled
-          ? memoryService.retrieve(lastUser?.text ?? '', 6)
-          : [],
+        relevantMemories,
         emotionalState: useMayaStore.getState().emotion,
         relationshipState: useMayaStore.getState().relationship,
         language: settingsRef.current.ai.language,
@@ -172,6 +229,50 @@ export function useConversationEngine() {
       };
     },
     [],
+  );
+
+  /** LLM memory extraction (heuristic runs first as instant fallback). */
+  const extractMemoriesLLM = useCallback(
+    async (userText: string, conversationId: string) => {
+      if (userText.trim().length < 12) return;
+      const ctx = await buildContext(conversationId);
+      const now = Date.now();
+      const res = await provider.generateResponse(
+        [
+          { id: crypto.randomUUID(), conversationId, role: 'user', text: userText.slice(0, 600), timestamp: now },
+          {
+            id: crypto.randomUUID(), conversationId, role: 'system', text:
+              'Extract durable facts about the user as a JSON array ONLY, e.g. [{"type":"preference","key":"favorite_editor","value":"VS Code","confidence":0.9}]. ' +
+              'Types: profile, preference, project, interest, person, event, goal, fact. Max 3 items. ' +
+              'Reply [] if nothing durable. Never include passwords, tokens, or secrets.',
+            timestamp: now,
+          },
+        ],
+        ctx,
+      );
+      const fence = res.text.replace(/```json|```/g, '');
+      const start = fence.indexOf('[');
+      const end = fence.lastIndexOf(']');
+      if (start < 0 || end <= start) return;
+      const arr = JSON.parse(fence.slice(start, end + 1)) as unknown;
+      if (!Array.isArray(arr)) return;
+      for (const item of arr.slice(0, 3)) {
+        const o = (item ?? {}) as Record<string, unknown>;
+        const value = String(o.value ?? '').trim().slice(0, 300);
+        const key = String(o.key ?? '').trim();
+        if (!value || !key) continue;
+        if (/password|secret|token|otp|ssn|credit/i.test(value)) continue;
+        memoryService.upsert({
+          type: validMemoryType(o.type),
+          key,
+          value,
+          confidence:
+            typeof o.confidence === 'number' ? Math.min(1, Math.max(0, o.confidence)) : 0.7,
+          sourceConversationId: conversationId,
+        });
+      }
+    },
+    [buildContext, provider],
   );
 
   const speak = useCallback(async (text: string) => {
@@ -184,6 +285,21 @@ export function useConversationEngine() {
       energy: emotion.energy,
       concern: emotion.concern,
     });
+    // Skip what streaming speech already voiced (sentence-by-sentence).
+    const already = spokenRef.current;
+    const body = already > 0 ? (already < text.length ? text.slice(already).trim() : '') : text;
+    if (!body) {
+      speakingRef.current = false;
+      useMayaStore.getState().setTtsActive(false);
+      if (settingsRef.current.conversation.autoListen) {
+        useMayaStore.getState().setActivity('listening');
+        useConversationStore.getState().setConvState('listening');
+      } else {
+        useMayaStore.getState().setActivity('idle');
+        useConversationStore.getState().setConvState('connected');
+      }
+      return;
+    }
     speakingRef.current = true;
     useMayaStore.getState().setActivity('speaking');
     useConversationStore.getState().setConvState('speaking');
@@ -195,16 +311,16 @@ export function useConversationEngine() {
       if ((s.voice.voiceId || '') === 'gateway') {
         // Cloud voice: sentence MP3s from the gateway, real output levels.
         // Falls back to system TTS when the gateway has no voice configured.
-        const played = await speakViaGateway(text, cancelled);
+        const played = await speakViaGateway(body, cancelled);
         if (!played) {
-          await textToSpeech.speak(text, {
+          await textToSpeech.speak(body, {
             rate: s.voice.speed * ve.speed,
             pitch: s.voice.pitch * ve.pitch,
             emotion: ve,
           });
         }
       } else {
-        await textToSpeech.speak(text, {
+        await textToSpeech.speak(body, {
           rate: s.voice.speed * ve.speed,
           pitch: s.voice.pitch * ve.pitch,
           voiceId: s.voice.voiceId || undefined,
@@ -233,6 +349,7 @@ export function useConversationEngine() {
       abortRef.current?.abort();
       const abort = new AbortController();
       abortRef.current = abort;
+      spokenRef.current = 0;
 
       const st = useConversationStore.getState();
       let activeId = st.activeId;
@@ -254,9 +371,10 @@ export function useConversationEngine() {
       useMayaStore.getState().setActivity('processing');
       useMayaStore.getState().pushUserTurn(text);
 
-      // Memory extraction (local heuristic; backend runs the real one)
+      // Memory extraction: fast heuristic now, LLM pass in background.
       if (settingsRef.current.privacy.memoryEnabled) {
         memoryService.extractFromTurn(text, activeId);
+        void extractMemoriesLLM(text, activeId).catch(() => undefined);
         // eslint-disable-next-line no-misleading-character-class -- Devanagari block intentionally includes combining marks
         const nameHit = text.match(/(?:my name is|call me)\s+([A-Za-z\u0900-\u097F][\w\u0900-\u097F .-]{1,30})/iu);
         if (nameHit && !settingsRef.current.userName) {
@@ -273,7 +391,7 @@ export function useConversationEngine() {
       });
 
       try {
-        const ctx = buildContext(activeId);
+        const ctx = await buildContext(activeId);
         if (cleanImages.length > 0) ctx.images = cleanImages;
         const stream = provider.sendMessage(text, ctx);
 
@@ -284,6 +402,35 @@ export function useConversationEngine() {
             full += ch.text;
             useConversationStore.getState().updateMessage(placeholder.id, { text: full, partial: true });
             useConversationStore.getState().setPartialMaya(full);
+            // Streaming speech: voice finished sentences while the rest
+            // streams in (system voice path; gateway voice plays whole).
+            const sNow = settingsRef.current;
+            if (
+              sNow.conversation.streamSpeech !== false &&
+              (sNow.voice.voiceId || '') !== 'gateway' &&
+              !abort.signal.aborted
+            ) {
+              const next = nextSpeakable(full, spokenRef.current);
+              if (next) {
+                spokenRef.current = next.newLen;
+                speakingRef.current = true;
+                useMayaStore.getState().setActivity('speaking');
+                useConversationStore.getState().setConvState('speaking');
+                useMayaStore.getState().setTtsActive(true);
+                const em = useMayaStore.getState().emotion;
+                const vv = emotionToVoice({
+                  excitement: em.excitement, mood: em.mood, energy: em.energy, concern: em.concern,
+                });
+                void textToSpeech
+                  .speak(next.text, {
+                    rate: sNow.voice.speed * vv.speed,
+                    pitch: sNow.voice.pitch * vv.pitch,
+                    voiceId: sNow.voice.voiceId || undefined,
+                    emotion: vv,
+                  })
+                  .catch(() => undefined);
+              }
+            }
           }
           if (ch.mayaState) useMayaStore.getState().setAvatarOverride(ch.mayaState);
           if (ch.done) break;
@@ -311,7 +458,7 @@ export function useConversationEngine() {
               toolCalls.push({ name: job.name, summary: 'failed' });
             }
           }
-          const followCtx = buildContext(activeId);
+          const followCtx = await buildContext(activeId);
           const now = Date.now();
           const followMsgs: ChatMessage[] = [
             ...followCtx.recentMessages.slice(-8),
@@ -357,7 +504,7 @@ export function useConversationEngine() {
         processingRef.current = false;
       }
     },
-    [buildContext, provider, speak],
+    [buildContext, extractMemoriesLLM, provider, speak],
   );
 
   const interrupt = useCallback(() => {

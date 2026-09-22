@@ -100,6 +100,8 @@ function openDb() {
       CREATE TABLE IF NOT EXISTS chunks(doc TEXT NOT NULL, idx INTEGER NOT NULL, text TEXT NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(doc UNINDEXED, idx UNINDEXED, owner UNINDEXED, text);
       CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL, created INTEGER);
+      CREATE TABLE IF NOT EXISTS memory_vec(memory TEXT PRIMARY KEY, vec TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS chunk_vec(doc TEXT NOT NULL, idx INTEGER NOT NULL, vec TEXT NOT NULL, PRIMARY KEY(doc, idx));
     `);
     return db;
   } catch {
@@ -315,11 +317,23 @@ export const store = {
   userForToken(token) {
     if (!token) return null;
     if (db) {
-      const r = db.prepare('SELECT username FROM tokens WHERE token = ?').get(token);
-      return r ? r.username : null;
+      const r = db.prepare('SELECT username, created FROM tokens WHERE token = ?').get(token);
+      if (!r) return null;
+      if (Date.now() - r.created > 30 * 86400000) {
+        db.prepare('DELETE FROM tokens WHERE token = ?').run(token);
+        return null; // sessions expire after 30 days
+      }
+      return r.username;
     }
     const all = readJson('tokens.json', {});
-    return all[token]?.username ?? null;
+    const rec = all[token];
+    if (!rec) return null;
+    if (Date.now() - (rec.created ?? 0) > 30 * 86400000) {
+      delete all[token];
+      writeJson('tokens.json', all);
+      return null;
+    }
+    return rec.username ?? null;
   },
 };
 
@@ -354,4 +368,127 @@ export function verifyUser(users, username, password) {
 
 export function issueToken() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+// ─── file-based accounts (admin-provisioned via server/add-user.js) ─────────
+// Stored as scrypt hashes (never plaintext). Checked alongside USERS env.
+
+export function loadFileUsers() {
+  const arr = readJson('users.json', []);
+  return Array.isArray(arr) ? arr : [];
+}
+
+export function addFileUser(username, password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  const all = loadFileUsers().filter((u) => u.username !== username);
+  all.push({ username, salt, hash, created: Date.now() });
+  writeJson('users.json', all);
+}
+
+export function verifyFileUser(username, password) {
+  const u = loadFileUsers().find((x) => x.username === username);
+  if (!u || typeof password !== 'string') return false;
+  try {
+    const h = crypto.scryptSync(password, u.salt, 64);
+    const e = Buffer.from(u.hash, 'hex');
+    return h.length === e.length && crypto.timingSafeEqual(h, e);
+  } catch {
+    return false;
+  }
+}
+
+// ─── embedding vectors (cosine search over memories + chunks) ───────────────
+
+export function cosineSim(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || a.length !== b.length) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na <= 0 || nb <= 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+export function saveMemoryVec(id, vec) {
+  if (!Array.isArray(vec) || vec.length === 0) return;
+  const s = JSON.stringify(vec);
+  if (db) {
+    db.prepare('INSERT OR REPLACE INTO memory_vec(memory, vec) VALUES(?, ?)').run(id, s);
+    return;
+  }
+  const all = readJson('vectors.json', { mem: {}, chunks: {} });
+  all.mem[id] = vec;
+  writeJson('vectors.json', all);
+}
+
+export function saveChunkVecs(doc, pairs) {
+  if (!Array.isArray(pairs) || pairs.length === 0) return;
+  if (db) {
+    const ins = db.prepare('INSERT OR REPLACE INTO chunk_vec(doc, idx, vec) VALUES(?, ?, ?)');
+    for (const [idx, vec] of pairs) ins.run(doc, idx, JSON.stringify(vec));
+    return;
+  }
+  const all = readJson('vectors.json', { mem: {}, chunks: {} });
+  for (const [idx, vec] of pairs) all.chunks[`${doc}:${idx}`] = vec;
+  writeJson('vectors.json', all);
+}
+
+export function allMemoryVecs(owner) {
+  if (db) {
+    return db
+      .prepare(
+        `SELECT v.memory AS id, v.vec AS vec FROM memory_vec v
+         JOIN memories m ON m.id = v.memory WHERE m.owner = ?`,
+      )
+      .all(owner)
+      .map((r) => ({ id: r.id, vec: safeVec(r.vec) }))
+      .filter((x) => x.vec.length > 0);
+  }
+  const all = readJson('vectors.json', { mem: {}, chunks: {} });
+  const mems = readJson('memories.json', []);
+  const mine = new Set(mems.filter((m) => (m.owner ?? 'local') === owner).map((m) => m.id));
+  return Object.entries(all.mem ?? {})
+    .filter(([id]) => mine.has(id))
+    .map(([id, vec]) => ({ id, vec: safeVec(vec) }))
+    .filter((x) => x.vec.length > 0);
+}
+
+export function allChunkVecs(owner) {
+  if (db) {
+    return db
+      .prepare(
+        `SELECT v.doc AS doc, v.idx AS idx, v.vec AS vec, c.text AS text FROM chunk_vec v
+         JOIN chunks c ON c.doc = v.doc AND c.idx = v.idx
+         JOIN docs d ON d.id = v.doc WHERE d.owner = ?`,
+      )
+      .all(owner)
+      .map((r) => ({ doc: r.doc, idx: r.idx, text: r.text, vec: safeVec(r.vec) }))
+      .filter((x) => x.vec.length > 0);
+  }
+  const all = readJson('vectors.json', { mem: {}, chunks: {} });
+  const docs = readJson('docs.json', []).filter((d) => (d.owner ?? 'local') === owner);
+  const out = [];
+  for (const d of docs) {
+    d.chunks.forEach((text, idx) => {
+      const vec = safeVec(all.chunks?.[`${d.id}:${idx}`]);
+      if (vec.length > 0) out.push({ doc: d.id, idx, text, vec });
+    });
+  }
+  return out;
+}
+
+function safeVec(v) {
+  try {
+    const arr = typeof v === 'string' ? JSON.parse(v) : v;
+    if (!Array.isArray(arr)) return [];
+    const nums = arr.map(Number).filter(Number.isFinite);
+    return nums.length === arr.length && nums.length > 10 ? nums : [];
+  } catch {
+    return [];
+  }
 }

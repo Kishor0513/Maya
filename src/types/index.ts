@@ -184,6 +184,8 @@ export interface ConversationSettings {
   autoPlayResponses: boolean;
   /** Beta: trigger listening on "hey maya" while the mic is on. */
   wakeWord: boolean;
+  /** Voice finished sentences while the reply still streams (default on). */
+  streamSpeech: boolean;
 }
 
 export interface PrivacySettings {

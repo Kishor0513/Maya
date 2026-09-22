@@ -33,7 +33,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { store, STORE_KIND, parseUsers, verifyUser, issueToken } from './store.js';
+import { store, STORE_KIND, parseUsers, verifyUser, issueToken, verifyFileUser, chunkText, cosineSim } from './store.js';
 
 const USERS = parseUsers();
 const authEnabled = USERS.size > 0;
@@ -69,6 +69,31 @@ function authHeaders() {
   return { Authorization: `Bearer ${UPSTREAM_KEY}` };
 }
 const MAX_BODY = 1_000_000;
+
+// Rate limiting: per-IP sliding windows (no deps). Health stays open;
+// login is strict (brute force), everything else generous.
+const RATE_WINDOW_MS = 60000;
+const RATE_API_MAX = 120;
+const RATE_LOGIN_MAX = 10;
+const rateHits = new Map();
+let rateSweepAt = 0;
+
+function rateOk(key, max) {
+  const now = Date.now();
+  if (now - rateSweepAt > RATE_WINDOW_MS) {
+    rateSweepAt = now;
+    for (const [k, arr] of rateHits) {
+      const fresh = arr.filter((t) => now - t < RATE_WINDOW_MS);
+      if (fresh.length > 0) rateHits.set(k, fresh);
+      else rateHits.delete(k);
+    }
+  }
+  const arr = (rateHits.get(key) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (arr.length >= max) return false;
+  arr.push(now);
+  rateHits.set(key, arr);
+  return true;
+}
 
 // Persistent store (sqlite when available, JSON files otherwise). Replaces
 // the old in-memory Map — memories and documents survive restarts.
@@ -341,12 +366,30 @@ function lastUserText(messages) {
   return '';
 }
 
-/** RAG: inject top saved-document chunks as a system note (owner-scoped). */
-function injectNotes(owner, messages) {
+/** RAG: FTS hits blended with embedding-cosine hits (owner-scoped). */
+async function injectNotes(owner, messages) {
   try {
     const q = lastUserText(messages);
     if (!q || q.length < 4) return messages;
-    const hits = store.searchChunks(owner, q, 3);
+    const fts = store.searchChunks(owner, q, 3);
+    let extra = [];
+    try {
+      const qv = await embedOne(q);
+      if (qv) {
+        const seen = new Set(fts.map((h) => `${h.doc}:${h.idx}`));
+        const ranked = store
+          .allChunkVecs(owner)
+          .map((c) => ({ ...c, s: cosineSim(qv, c.vec) }))
+          .filter((c) => c.s > 0.35)
+          .sort((a, b) => b.s - a.s)
+          .slice(0, 3)
+          .filter((c) => !seen.has(`${c.doc}:${c.idx}`));
+        extra = store.withTitles(owner, ranked);
+      }
+    } catch {
+      /* embeddings unavailable — FTS alone */
+    }
+    const hits = [...fts, ...extra].slice(0, 5);
     if (hits.length === 0) return messages;
     const note = `Relevant notes from the user's saved documents (use them if helpful, never mention this block):\n${hits
       .map((h) => `- [${h.title}] ${String(h.text).slice(0, 500)}`)
@@ -361,6 +404,41 @@ function injectNotes(owner, messages) {
   }
 }
 
+/** Native Gemini embeddings (the OpenAI-compat surface has no embed op). */
+async function embedOne(text) {
+  if (!UPSTREAM_KEY || !UPSTREAM_BASE.includes('googleapis.com')) return null;
+  try {
+    const res = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': UPSTREAM_KEY },
+        body: JSON.stringify({ content: { parts: [{ text: String(text ?? '').slice(0, 4000) }] } }),
+      },
+    );
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const v = data?.embedding?.values;
+    if (!Array.isArray(v)) return null;
+    const nums = v.map(Number).filter(Number.isFinite);
+    return nums.length > 10 ? nums : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fire-and-forget vector indexing after a write (never fails the request). */
+function indexMemoryVec(owner, saved) {
+  void (async () => {
+    try {
+      const v = await embedOne(`${saved.key ?? ''} ${saved.value ?? ''}`);
+      if (v) store.saveMemoryVec(saved.id, v);
+    } catch {
+      /* embeddings unavailable — TF-IDF/FTS still work */
+    }
+  })();
+}
+
 async function handleChat(req, res) {
   if (needsAuth && !UPSTREAM_KEY) return json(res, 503, { error: 'gateway has no API key set (UPSTREAM_KEY)' });
   let body;
@@ -369,7 +447,7 @@ async function handleChat(req, res) {
   } catch {
     return json(res, 400, { error: 'invalid JSON body' });
   }
-  const messages = injectNotes(ownerOf(req), toMessages(body));
+  const messages = await injectNotes(ownerOf(req), toMessages(body));
   if (!messages) return json(res, 400, { error: 'expected { messages } or { message }' });
   const model = pickModel(body);
   const t0 = Date.now();
@@ -412,7 +490,7 @@ async function handleChatStream(req, res) {
     return res.end();
   }
   // Body must be fully read before we can start the SSE response.
-  const messages = injectNotes(ownerOf(req), toMessages(body));
+  const messages = await injectNotes(ownerOf(req), toMessages(body));
   if (!messages) {
     res.writeHead(400, headers);
     return res.end();
@@ -497,6 +575,14 @@ async function handle(req, res) {
     return json(res, 401, { error: 'unauthorized' });
   }
 
+  if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    const loginPath = url.pathname === '/api/login';
+    if (!rateOk(`${ip}:${loginPath ? 'login' : 'api'}`, loginPath ? RATE_LOGIN_MAX : RATE_API_MAX)) {
+      return json(res, 429, { error: 'rate-limited', retryAfter: 60 });
+    }
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/health') {
     return json(res, 200, { ok: true, model: UPSTREAM_MODEL, base: UPSTREAM_BASE, key: UPSTREAM_KEY ? 'set' : needsAuth ? 'missing' : 'not-needed-locally', auth: authEnabled, db: STORE_KIND });
   }
@@ -505,7 +591,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       if (!authEnabled) return json(res, 200, { token: null, user: 'local' });
       const { username, password } = body;
-      if (typeof username !== 'string' || !verifyUser(USERS, username, password)) {
+      if (typeof username !== 'string' || !(verifyUser(USERS, username, password) || verifyFileUser(username, password))) {
         return json(res, 401, { error: 'invalid credentials' });
       }
       const token = issueToken();
@@ -525,7 +611,10 @@ async function handle(req, res) {
     try {
       const m = await readJson(req);
       if (!m || typeof m.id !== 'string') return json(res, 400, { error: 'memory needs an id' });
-      return json(res, 200, store.upsertMemory(ownerOf(req), m));
+      const owner = ownerOf(req);
+      const saved = store.upsertMemory(owner, m);
+      indexMemoryVec(owner, saved);
+      return json(res, 200, saved);
     } catch {
       return json(res, 400, { error: 'invalid JSON body' });
     }
@@ -560,7 +649,21 @@ async function handle(req, res) {
       const text = String(body.text ?? '').trim();
       if (!text) return json(res, 400, { error: 'empty document' });
       const title = String(body.title ?? '').trim().slice(0, 120) || text.slice(0, 40) || 'Untitled note';
-      return json(res, 200, store.createDoc(ownerOf(req), title, text.slice(0, 20000)));
+      const owner = ownerOf(req);
+      const created = store.createDoc(owner, title, text.slice(0, 20000));
+      void (async () => {
+        try {
+          const pairs = [];
+          for (const [i, c] of chunkText(text.slice(0, 20000)).entries()) {
+            const v = await embedOne(c);
+            if (v) pairs.push([i, v]);
+          }
+          if (pairs.length > 0) store.saveChunkVecs(created.id, pairs);
+        } catch {
+          /* ignore — FTS covers retrieval */
+        }
+      })();
+      return json(res, 200, created);
     } catch {
       return json(res, 400, { error: 'invalid JSON body' });
     }
@@ -573,6 +676,23 @@ async function handle(req, res) {
     return res.end();
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/memories/search') {
+    try {
+      const q = (url.searchParams.get('q') ?? '').slice(0, 200);
+      const owner = ownerOf(req);
+      const qv = await embedOne(q);
+      if (!qv) return json(res, 200, []);
+      const ranked = store
+        .allMemoryVecs(owner)
+        .map(({ id, vec }) => ({ id, s: cosineSim(qv, vec) }))
+        .filter((x) => x.s > 0.3)
+        .sort((a, b) => b.s - a.s)
+        .slice(0, 6);
+      return json(res, 200, ranked.map((x) => store.getMemory(owner, x.id)).filter(Boolean));
+    } catch {
+      return json(res, 200, []);
+    }
+  }
   if (req.method === 'POST' && url.pathname === '/api/tools/web_search') {
     try {
       const body = await readJson(req);
