@@ -186,6 +186,8 @@ export interface ConversationSettings {
   wakeWord: boolean;
   /** Voice finished sentences while the reply still streams (default on). */
   streamSpeech: boolean;
+  /** Auto-run read-only shell commands without asking (writes always ask). */
+  autoApproveReads: boolean;
 }
 
 export interface PrivacySettings {

@@ -12,7 +12,7 @@ const DEFAULTS: AppSettings = {
     endpoint: '',
     language: 'auto',
   },
-  conversation: { autoListen: true, allowInterrupt: true, autoPlayResponses: true, wakeWord: false, streamSpeech: true },
+  conversation: { autoListen: true, allowInterrupt: true, autoPlayResponses: true, wakeWord: false, streamSpeech: true, autoApproveReads: true },
   privacy: { storeConversations: true, memoryEnabled: true },
   voiceMode: 'auto',
   userName: '',

@@ -12,6 +12,12 @@ import { useMayaStore } from '../stores/mayaStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useAuthStore } from '../stores/authStore';
 import { getTool, describeWhen, callGatewayTool } from '../services/tools/MayaTools';
+import {
+  parseComputerJobs, COMPUTER_TAG_RE, isBlocked, classifyRisk,
+  computerExec, computerOpen, computerScreenshot, computerReadFile, computerWriteFile,
+  recordAudit, type ComputerJob,
+} from '../services/computer';
+import { useComputerStore } from '../stores/computerStore';
 import type { ChatMessage, ConversationContext, Memory, SourceRef, ToolCallRecord } from '../types';
 import { nextSpeakable } from '../utils/speechChunks';
 
@@ -164,6 +170,109 @@ function validMemoryType(t: unknown): Memory['type'] {
     t === 'person' || t === 'event' || t === 'goal' || t === 'fact'
     ? t
     : 'fact';
+}
+
+async function approveComputer(
+  title: string,
+  job: ComputerJob,
+  risk: 'read' | 'write' | 'system',
+): Promise<boolean> {
+  return useComputerStore.getState().requestApproval({
+    tool: job.name,
+    title,
+    detail: job.detail,
+    risk,
+    warning:
+      risk === 'system'
+        ? 'This can type keys and drive apps. Watch what it does; deny anything surprising.'
+        : undefined,
+  });
+}
+
+async function runComputerJob(
+  job: ComputerJob,
+): Promise<{ text: string; summary: string; images?: string[] }> {
+  const audit = (result: 'ok' | 'denied' | 'blocked' | 'failed', note?: string) =>
+    recordAudit({ tool: job.name, detail: job.detail, result, note });
+  const autoReads = useSettingsStore.getState().conversation.autoApproveReads !== false;
+  switch (job.kind) {
+    case 'screen': {
+      try {
+        const shot = await computerScreenshot();
+        audit('ok', 'screenshot captured');
+        return {
+          text: 'screenshot captured (see attached image)',
+          summary: 'screen captured',
+          images: [shot],
+        };
+      } catch (err) {
+        audit('failed', err instanceof Error ? err.message : undefined);
+        throw err instanceof Error ? err : new Error('screenshot failed');
+      }
+    }
+    case 'open': {
+      if (!(await approveComputer(`Open "${job.arg}"?`, job, 'write'))) {
+        audit('denied');
+        throw new Error('user denied');
+      }
+      try {
+        await computerOpen(job.arg);
+        audit('ok');
+        return { text: `opened ${job.arg}`, summary: `opened ${job.arg}` };
+      } catch (err) {
+        audit('failed');
+        throw err instanceof Error ? err : new Error('open failed');
+      }
+    }
+    case 'read': {
+      try {
+        const content = await computerReadFile(job.arg);
+        audit('ok');
+        return { text: `file ${job.arg}:\n${content.slice(0, 3000)}`, summary: `read ${job.arg}` };
+      } catch (err) {
+        audit('failed');
+        throw err instanceof Error ? err : new Error('read failed');
+      }
+    }
+    case 'write': {
+      if (!(await approveComputer(`Write "${job.arg}"?`, job, 'write'))) {
+        audit('denied');
+        throw new Error('user denied');
+      }
+      try {
+        await computerWriteFile(job.arg, job.content);
+        audit('ok');
+        return { text: `wrote ${job.arg}`, summary: `wrote ${job.arg}` };
+      } catch (err) {
+        audit('failed');
+        throw err instanceof Error ? err : new Error('write failed');
+      }
+    }
+    case 'run': {
+      if (isBlocked(job.arg)) {
+        audit('blocked', 'safety policy');
+        throw new Error('refused by safety policy (destructive, privileged, or exfiltration pattern)');
+      }
+      const risk = classifyRisk(job.arg);
+      if (!(risk === 'read' && autoReads)) {
+        if (!(await approveComputer('Run this command?', job, risk))) {
+          audit('denied');
+          throw new Error('user denied');
+        }
+      }
+      try {
+        const r = await computerExec(job.arg);
+        audit(r.code === 0 ? 'ok' : 'failed', `exit ${r.code}`);
+        return {
+          text: `exit ${r.code}${r.timedOut ? ' (timed out)' : ''}\nSTDOUT:\n${r.stdout.slice(0, 3000)}\nSTDERR:\n${r.stderr.slice(0, 1000)}`,
+          summary: `ran ${job.arg.slice(0, 60)}`,
+        };
+      } catch (err) {
+        audit('failed');
+        throw err instanceof Error ? err : new Error('exec failed');
+      }
+    }
+  }
 }
 
 /**
@@ -475,6 +584,47 @@ export function useConversationEngine() {
           ];
           const follow = await provider.generateResponse(followMsgs, followCtx);
           if (follow.text.trim()) finalText = follow.text.trim();
+        }
+        // Computer rounds: screen/action/file markers with approval gates.
+        // Same shape as tool rounds, plus vision follow-ups for screenshots.
+        for (let round = 0; round < 2 && !abort.signal.aborted; round++) {
+          const cjobs = parseComputerJobs(finalText);
+          if (cjobs.length === 0) break;
+          finalText = finalText.replace(COMPUTER_TAG_RE, '').trim();
+          const resultLines: string[] = [];
+          const followImages: string[] = [];
+          for (const job of cjobs.slice(0, 2)) {
+            try {
+              const r = await runComputerJob(job);
+              resultLines.push(`${job.name} → ${r.text}`);
+              if (r.images) followImages.push(...r.images);
+              toolCalls.push({ name: job.name, summary: r.summary });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'failed';
+              resultLines.push(`${job.name} unavailable (${msg})`);
+              toolCalls.push({ name: job.name, summary: 'failed' });
+            }
+          }
+          const followCtx2 = await buildContext(activeId);
+          const now2 = Date.now();
+          const follow2 = await provider.generateResponse(
+            [
+              ...followCtx2.recentMessages.slice(-8),
+              { id: crypto.randomUUID(), conversationId: activeId, role: 'user', text, timestamp: now2 },
+              {
+                id: crypto.randomUUID(), conversationId: activeId, role: 'assistant',
+                text: finalText || '(thinking)', timestamp: now2,
+              },
+              {
+                id: crypto.randomUUID(), conversationId: activeId, role: 'user',
+                text: `Computer results — continue helping, briefly, with no [TAG: ...] markers:\n${resultLines.join('\n')}`,
+                ...(followImages.length > 0 ? { images: followImages } : {}),
+                timestamp: now2,
+              },
+            ],
+            followCtx2,
+          );
+          if (follow2.text.trim()) finalText = follow2.text.trim();
         }
         useConversationStore.getState().updateMessage(placeholder.id, {
           text: finalText,

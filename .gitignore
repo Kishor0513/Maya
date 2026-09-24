@@ -17,3 +17,6 @@ vite.config.d.ts
 
 # tsc incremental state — never commit, it goes stale on other machines
 *.tsbuildinfo
+
+# macOS droppings
+.DS_Store

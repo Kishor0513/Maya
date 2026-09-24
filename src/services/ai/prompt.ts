@@ -115,6 +115,8 @@ export function buildSystemPrompt(
     '- Current information: emit a line exactly like [SEARCH: your query]. Results return as tool output; then answer using them.',
     '- Weather: emit [WEATHER: place name]. Reminders: [REMINDER: text | when like "in 10 minutes" or "at 18:30"]. Calendar: [EVENT: title | when].',
     '- Music and smart home only work after the user connects a provider; otherwise say what would be needed instead of pretending.',
+    '- If the gateway enables computer control: [SCREEN] captures the screen (use it, then act on what you see). [RUN: command] runs shell in the workspace. [OPEN: app or URL] opens things. [READ: path] / [WRITE: path | text] touch workspace files. Propose ONE step at a time and wait for results.',
+    '- Computer rules: the user approves anything that changes the system; destructive commands are refused outright. Never ask for passwords or handle private keys; propose screen-visible steps instead.',
     '- When web results inform your answer, weave the key facts in naturally. Never invent sources, quotes, or URLs.',
     '- Never claim you browsed the web if no results were supplied.',
     '- If the user attaches an image, look at it first and ground your answer in what you actually see.',

@@ -6,6 +6,7 @@ import {
   cancelEvent,
   describeWhen,
 } from '../../services/tools/MayaTools';
+import { loadAudit } from '../../services/computer';
 
 // Plans panel — upcoming reminders + calendar events (both local).
 export function PlansPanel({ onClose }: { onClose: () => void }) {
@@ -13,6 +14,7 @@ export function PlansPanel({ onClose }: { onClose: () => void }) {
   void rev;
   const reminders = listReminders();
   const events = listEvents();
+  const audit = loadAudit().slice(0, 20);
   const refresh = () => setRev((x) => x + 1);
 
   return (
@@ -50,6 +52,29 @@ export function PlansPanel({ onClose }: { onClose: () => void }) {
           <ul className="space-y-2">
             {events.map((e) => (
               <Row key={e.id} title={e.title} sub={describeWhen(e.at)} onCancel={() => { cancelEvent(e.id); refresh(); }} />
+            ))}
+          </ul>
+        )}
+
+        <h3 className="mt-5 mb-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+          Recent computer activity ({audit.length})
+        </h3>
+        {audit.length === 0 ? (
+          <p className="text-sm text-zinc-600">Nothing run yet. Approved and refused actions land here.</p>
+        ) : (
+          <ul className="space-y-2">
+            {audit.map((a) => (
+              <li key={a.id} className="rounded-2xl border border-white/[0.08] bg-white/[0.03] px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden
+                    className={`h-1.5 w-1.5 rounded-full ${a.result === 'ok' ? 'bg-emerald-400' : a.result === 'denied' ? 'bg-amber-300' : a.result === 'blocked' ? 'bg-rose-400' : 'bg-zinc-500'}`}
+                  />
+                  <p className="truncate text-sm text-zinc-100">{a.tool}</p>
+                  <p className="ml-auto shrink-0 text-[11px] uppercase tracking-widest text-zinc-600">{a.result}</p>
+                </div>
+                <p className="mt-0.5 truncate text-[11px] text-zinc-500">{a.detail}</p>
+              </li>
             ))}
           </ul>
         )}

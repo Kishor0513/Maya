@@ -15,6 +15,7 @@ import { MemoryPanel } from '../components/memory/MemoryPanel';
 import { DocsPanel } from '../components/memory/DocsPanel';
 import { PlansPanel } from '../components/plans/PlansPanel';
 import { AuthGate } from '../components/common/AuthGate';
+import { ApprovalDialog } from '../components/common/ApprovalDialog';
 import { ACCENTS } from '../features/appearance/accents';
 import { initReminders } from '../services/tools/MayaTools';
 import { useAuthStore } from '../stores/authStore';
@@ -347,6 +348,7 @@ export function App() {
       {docsOpen && <DocsPanel onClose={() => setDocsOpen(false)} />}
       {plansOpen && <PlansPanel onClose={() => setPlansOpen(false)} />}
       {authRequired && !authToken && <AuthGate />}
+      <ApprovalDialog />
       <PermissionDialog
         open={permOpen}
         onAllow={async () => { setPermOpen(false); const ok = await engine.ensureMic(); if (ok) setMicOn(true); }}

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useConversationStore } from '../../stores/conversationStore';
+import { useComputerStore } from '../../stores/computerStore';
 import { memoryService } from '../../services/memory/MemoryService';
 import { textToSpeech } from '../../services/speech/TextToSpeech';
 import { ACCENTS, type AccentId } from '../../features/appearance/accents';
@@ -115,6 +116,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             Your Gemini key stays on your backend gateway — the browser only talks to `/api`.
             Never paste a vendor API key here.
           </p>
+        </Section>
+
+        <Section title="Computer control">
+          <ComputerStatus />
         </Section>
 
         <Section title="Voice">
@@ -273,4 +278,47 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 
 function StatusDot() {
   return <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />;
+}
+
+function ComputerStatus() {
+  const status = useComputerStore((s) => s.status);
+  const refresh = useComputerStore((s) => s.refreshStatus);
+  const autoApprove = useSettingsStore((s) => s.conversation.autoApproveReads);
+  const updateNested = useSettingsStore((s) => s.updateNested);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  if (status === null) {
+    return <p className="text-sm text-zinc-500">Checking the gateway…</p>;
+  }
+  if (!status.enabled) {
+    return (
+      <p className="text-sm leading-relaxed text-zinc-400">
+        Off — set <span className="text-zinc-200">COMPUTER_TOOLS=true</span> on the
+        gateway and restart it to let Maya see and operate this computer.
+      </p>
+    );
+  }
+  return (
+    <div>
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-zinc-400 space-y-1">
+        <p><StatusDot /> Enabled · {status.platform}</p>
+        <p className="break-all">Workspace: {status.workspace ?? '—'}</p>
+      </div>
+      <div className="mt-1">
+        <Toggle
+          label="Auto-run read-only commands"
+          checked={autoApprove}
+          onChange={(v) => updateNested('conversation', { autoApproveReads: v })}
+        />
+      </div>
+      <p className="text-[11px] leading-relaxed text-zinc-600">
+        Writes, apps, and system actions always ask first. Destructive patterns are
+        refused outright and never prompt. Every action is logged under Plans →
+        Recent activity.
+      </p>
+    </div>
+  );
 }

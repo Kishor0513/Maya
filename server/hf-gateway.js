@@ -27,12 +27,17 @@
  *   HF_TOKEN / HF_MODEL / HF_BASE  legacy aliases for the HF setup above
  *   USERS      optional multi-user gate, e.g. USERS="alice:pw1,bob:pw2"
  *              (home-grade; empty = open single-user mode)
+ *   COMPUTER_TOOLS=true   enable local computer control (screenshots, shell,
+ *              apps, workspace files). Off by default — opt in deliberately.
+ *   MAYA_WORKSPACE=...    workspace dir for computer tools (default ~/Documents/Maya)
  *   DATA_DIR   storage dir for sqlite/JSON (default ./data)
  *   PORT       default 8787
  */
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { exec, execFile } from 'node:child_process';
 import { store, STORE_KIND, parseUsers, verifyUser, issueToken, verifyFileUser, chunkText, cosineSim } from './store.js';
 
 const USERS = parseUsers();
@@ -69,6 +74,61 @@ function authHeaders() {
   return { Authorization: `Bearer ${UPSTREAM_KEY}` };
 }
 const MAX_BODY = 1_000_000;
+
+// Local computer control (macOS-first). Disabled unless COMPUTER_TOOLS=true.
+// The gateway enforces the hard safety floor (blocklist below); the frontend
+// adds per-action user approval on top. Workspace jail applies to file ops.
+const COMPUTER_ENABLED = process.env.COMPUTER_TOOLS === 'true';
+
+function workspaceRoot() {
+  const w = process.env.MAYA_WORKSPACE || path.join(os.homedir(), 'Documents', 'Maya');
+  fs.mkdirSync(w, { recursive: true });
+  return w;
+}
+
+/** Resolve p inside the workspace; null on jail escape. */
+function jail(p) {
+  const root = workspaceRoot();
+  const full = path.normalize(path.join(root, String(p ?? '')));
+  if (full !== root && !full.startsWith(root + path.sep)) return null;
+  return full;
+}
+
+/** Authoritative server-side blocklist: never executed, even if approved. */
+const BLOCKED_CMD = [
+  /\brm\s+-[a-z]*r/i,
+  /\bsudo\b/i,
+  /(^|[;&|])\s*su\b/i,
+  /\b(ssh|scp|sftp|rsync)\b/i,
+  /curl[\s\S]*\|\s*(sh|bash)/i,
+  /wget[\s\S]*\|\s*(sh|bash)/i,
+  /:\(\)\s*\{/,
+  /\bdd\b[\s\S]*of=\/dev/i,
+  /\bmkfs\b/i,
+  /\bsecurity\b\s+(dump|find-generic-password|delete-generic-password)/i,
+  /keychain/i,
+];
+
+function isBlockedCommand(cmd) {
+  return BLOCKED_CMD.some((re) => re.test(cmd));
+}
+
+function runShell(cmd, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    exec(
+      cmd,
+      { cwd: workspaceRoot(), timeout: timeoutMs, maxBuffer: 1024 * 100, windowsHide: true },
+      (err, stdout, stderr) => {
+        resolve({
+          code: err && typeof err.code === 'number' ? err.code : err ? 1 : 0,
+          stdout: String(stdout ?? '').slice(0, 20000),
+          stderr: String(stderr ?? '').slice(0, 5000),
+          timedOut: !!err && err.killed === true,
+        });
+      },
+    );
+  });
+}
 
 // Rate limiting: per-IP sliding windows (no deps). Health stays open;
 // login is strict (brute force), everything else generous.
@@ -717,6 +777,120 @@ async function handle(req, res) {
       return json(res, 200, await toolTts(body.text));
     } catch {
       return json(res, 502, { error: 'tts unavailable' });
+    }
+  }
+  // — local computer control (gated by COMPUTER_TOOLS) —
+  const computerGate = () =>
+    COMPUTER_ENABLED
+      ? null
+      : json(res, 501, {
+          error: 'computer-disabled',
+          setup: 'Set COMPUTER_TOOLS=true on the gateway to enable local computer control.',
+        });
+
+  if (req.method === 'GET' && url.pathname === '/api/computer/status') {
+    return json(res, 200, {
+      enabled: COMPUTER_ENABLED,
+      platform: process.platform,
+      workspace: COMPUTER_ENABLED ? workspaceRoot() : null,
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/computer/screenshot') {
+    const gate = computerGate();
+    if (gate) return gate;
+    if (process.platform !== 'darwin') {
+      return json(res, 501, { error: 'screenshots need macOS (screencapture)' });
+    }
+    try {
+      const tmp = path.join(os.tmpdir(), `maya-shot-${Date.now()}.jpg`);
+      await new Promise((resolve, reject) => {
+        execFile('screencapture', ['-x', '-t', 'jpg', tmp], (e) => (e ? reject(e) : resolve(null)));
+      });
+      try {
+        const buf = fs.readFileSync(tmp);
+        return json(res, 200, { image: `data:image/jpeg;base64,${buf.toString('base64')}` });
+      } finally {
+        fs.unlink(tmp, () => undefined);
+      }
+    } catch {
+      return json(res, 502, { error: 'screenshot failed' });
+    }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/computer/open') {
+    const gate = computerGate();
+    if (gate) return gate;
+    try {
+      const body = await readJson(req);
+      const target = String(body.target ?? '').slice(0, 300).trim();
+      if (!target) return json(res, 400, { error: 'need a target app or URL' });
+      if (process.platform === 'darwin') {
+        await new Promise((resolve, reject) => {
+          execFile('open', [target], (e) => (e ? reject(e) : resolve(null)));
+        });
+        return json(res, 200, { opened: true, target });
+      }
+      return json(res, 501, { error: 'open needs macOS for now' });
+    } catch {
+      return json(res, 400, { error: 'invalid JSON body' });
+    }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/computer/exec') {
+    const gate = computerGate();
+    if (gate) return gate;
+    try {
+      const body = await readJson(req);
+      const command = String(body.command ?? '').slice(0, 2000);
+      if (!command.trim()) return json(res, 400, { error: 'need a command' });
+      if (isBlockedCommand(command)) {
+        return json(res, 403, { error: 'blocked', reason: 'destructive, privileged, or exfiltration pattern' });
+      }
+      return json(res, 200, await runShell(command));
+    } catch {
+      return json(res, 400, { error: 'invalid JSON body' });
+    }
+  }
+  if (req.method === 'GET' && url.pathname === '/api/computer/files') {
+    const gate = computerGate();
+    if (gate) return gate;
+    const full = jail(url.searchParams.get('path') ?? '');
+    if (!full) return json(res, 403, { error: 'outside workspace' });
+    try {
+      const entries = fs.readdirSync(full, { withFileTypes: true }).map((e) => ({
+        name: e.name,
+        type: e.isDirectory() ? 'dir' : 'file',
+      }));
+      return json(res, 200, { path: full, entries: entries.slice(0, 200) });
+    } catch {
+      return json(res, 404, { error: 'not found' });
+    }
+  }
+  if (req.method === 'GET' && url.pathname === '/api/computer/file') {
+    const gate = computerGate();
+    if (gate) return gate;
+    const full = jail(url.searchParams.get('path') ?? '');
+    if (!full) return json(res, 403, { error: 'outside workspace' });
+    try {
+      const stat = fs.statSync(full);
+      if (!stat.isFile() || stat.size > 51200) return json(res, 422, { error: 'not a readable file' });
+      return json(res, 200, { path: full, content: fs.readFileSync(full, 'utf8').slice(0, 51200) });
+    } catch {
+      return json(res, 404, { error: 'not found' });
+    }
+  }
+  if (req.method === 'POST' && url.pathname === '/api/computer/files') {
+    const gate = computerGate();
+    if (gate) return gate;
+    try {
+      const body = await readJson(req);
+      const full = jail(body.path ?? '');
+      const content = String(body.content ?? '');
+      if (!full) return json(res, 403, { error: 'outside workspace' });
+      if (content.length > 100000) return json(res, 422, { error: 'content too large' });
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+      return json(res, 200, { saved: true, path: full });
+    } catch {
+      return json(res, 400, { error: 'invalid JSON body' });
     }
   }
   const toolMatch = url.pathname.match(/^\/api\/tools\/([\w-]+)$/);

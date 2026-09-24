@@ -33,6 +33,8 @@ Browser (React + TS + Tailwind + Web Audio)
   real-amplitude waveform, typing indicator, streaming text
 - **Privacy controls** — login gate on shared servers, export chats (Markdown/JSON),
   mic/storage/memory status, PWA installable
+- **Computer control (opt-in)** — screenshots, shell, apps, workspace files with
+  per-action approval, hard blocklist, and audit log (see below)
 
 No vendor secrets in the frontend. The browser talks to **your backend
 gateway** (`/api/*`, `WS /api/realtime`), which holds provider keys, runs the
@@ -134,6 +136,23 @@ background with secrets blocklisted).
 
 Set `USERS="alice:pw1,bob:pw2"` on the gateway for multi-user login (home-grade
 plaintext; production wants OAuth/DB). The app shows a sign-in gate automatically.
+
+## Computer control (opt-in, local gateway only)
+
+Maya can see and operate the computer the gateway runs on — screenshots,
+shell, apps, and a workspace folder — behind layered safety:
+
+- Enable: `COMPUTER_TOOLS=true` (default off — opt in deliberately),
+  workspace `MAYA_WORKSPACE=~/Documents/Maya`.
+- Model markers: `[SCREEN]`, `[RUN: command]`, `[OPEN: app or URL]`,
+  `[READ: path]`, `[WRITE: path | text]`. Results feed back as follow-ups,
+  screenshots as vision input.
+- Consent: read-only commands auto-run (toggleable); writes, apps, and system
+  actions pause for an Allow/Deny dialog — including voice-triggered ones.
+- Hard floor: `rm -rf`, `sudo`, ssh/scp, pipe-to-shell, fork bombs, `/dev`
+  writes, and keychain access are refused outright, never even prompting.
+- Every attempt is audit-logged (Plans → Recent computer activity).
+- Never expose an enabled instance publicly without `GATEWAY_TOKEN` + `USERS`.
 
 ## Project layout
 
