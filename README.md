@@ -165,7 +165,6 @@ src/hooks/          useConversation (engine) · useVoiceActivity · useRealtime 
 src/stores/         zustand: conversation · settings · maya · voice · auth
 src/types/          strict domain types (no any)
 src/utils/          formatting, capability checks, chat export
-src/test/           vitest: machine, emotion, events, prompt, memory, tools, gateway
 server/             zero-dep gateway: chat/stream, memory+docs store (sqlite/JSON),
                     tools (search/weather/tts), multi-user auth, static app serving
 public/             PWA manifest + offline service worker + icon
@@ -178,8 +177,6 @@ npm run dev       # local dev
 npm run build     # typecheck + production build
 npm run preview   # serve dist
 npm run lint      # eslint (no any, strict hooks)
-npm run test      # vitest run (29 unit tests)
-npm run test:e2e  # build + Playwright happy-path in system Chrome (stubbed brain)
 ```
 
 ## Security notes
