@@ -51,16 +51,25 @@ export class TextToSpeech {
     }
     this.speaking = true;
     opts.onStart?.();
+    // Safety timeout: if the browser's speech engine wedges (no end event),
+    // resolve anyway so conversation state can never lock up. Late end
+    // events are ignored; interrupt() still stops any lingering audio.
     await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.speaking = false;
+        opts.onEnd?.();
+        resolve();
+      };
+      const timer = setTimeout(finish, 60000);
       audioManager.speakWithSystemTTS(clean, {
         rate: opts.emotion ? opts.emotion.speed : (opts.rate ?? 1.02),
         pitch: opts.emotion ? opts.emotion.pitch : (opts.pitch ?? 1),
         voiceId: opts.voiceId,
-        onEnd: () => {
-          this.speaking = false;
-          opts.onEnd?.();
-          resolve();
-        },
+        onEnd: finish,
       });
     });
   }

@@ -556,13 +556,17 @@ async function handleChatStream(req, res) {
     return res.end();
   }
   let hf;
+  const model = pickModel(body);
+  const t0 = Date.now();
   try {
-    hf = await callHf(messages, pickModel(body), true);
+    hf = await callHf(messages, model, true);
   } catch {
+    console.log(`[stream] model=${model} → unreachable`);
     res.writeHead(502, headers);
     return res.end();
   }
   if (!hf.ok || !hf.body) {
+    console.log(`[stream] model=${model} → upstream fail`);
     res.writeHead(502, headers);
     res.write('data: [DONE]\n\n');
     return res.end();
@@ -587,6 +591,7 @@ async function handleChatStream(req, res) {
       if (!line.startsWith('data:')) continue;
       const payload = line.slice(5).trim();
       if (payload === '[DONE]') {
+        console.log(`[stream] model=${model} → 200 (${Date.now() - t0}ms)`);
         res.write('data: [DONE]\n\n');
         res.end();
         return;
@@ -600,8 +605,11 @@ async function handleChatStream(req, res) {
     }
   }
   if (!closed) {
+    console.log(`[stream] model=${model} → 200, client held open (${Date.now() - t0}ms)`);
     res.write('data: [DONE]\n\n');
     res.end();
+  } else {
+    console.log(`[stream] model=${model} → client disconnected early (${Date.now() - t0}ms)`);
   }
 }
 

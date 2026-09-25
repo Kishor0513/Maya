@@ -37,7 +37,7 @@ export function ChatInput({
   disabled,
   placeholder = 'Type something…  (Enter to send)',
 }: {
-  onSend: (text: string, images: string[]) => void;
+  onSend: (text: string, images: string[]) => boolean | Promise<boolean> | void;
   disabled?: boolean;
   placeholder?: string;
 }) {
@@ -46,10 +46,12 @@ export function ChatInput({
   const [attaching, setAttaching] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const send = () => {
+  const send = async () => {
     const t = value.trim();
     if ((!t && images.length === 0) || disabled) return;
-    onSend(t, images);
+    const accepted = await onSend(t, images);
+    // false = engine busy — keep the text so nothing is silently lost.
+    if (accepted === false) return;
     setValue('');
     setImages([]);
   };

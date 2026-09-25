@@ -336,7 +336,12 @@ export function App() {
         {/* Bottom input — pinned, never squeezed out */}
         <footer className="shrink-0 px-4 pb-5 sm:px-6">
           <ChatInput
-            onSend={(t, images) => { setMicOn(true); void engine.processTurn(t, images); }}
+            onSend={(t, images) => {
+              if (engine.isProcessing()) return false;
+              setMicOn(true);
+              void engine.processTurn(t, images);
+              return true;
+            }}
             disabled={convState === 'processing'}
             placeholder={view === 'chat' ? 'Message Maya…  (Enter to send)' : 'Type something…  (Enter to send)'}
           />

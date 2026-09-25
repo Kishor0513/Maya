@@ -453,13 +453,17 @@ export function useConversationEngine() {
   const processTurn = useCallback(
     async (rawText: string, images: string[] = []) => {
       const text = rawText.trim();
-      if ((!text && images.length === 0) || processingRef.current) return;
+      if ((!text && images.length === 0) || processingRef.current) return false;
       processingRef.current = true;
       abortRef.current?.abort();
       const abort = new AbortController();
       abortRef.current = abort;
       spokenRef.current = 0;
 
+      // Everything below runs inside try/finally so the busy lock always
+      // releases — a stuck lock silently swallows all future sends.
+      let placeholder: ChatMessage | null = null;
+      try {
       const st = useConversationStore.getState();
       let activeId = st.activeId;
       if (!activeId) activeId = st.newConversation();
@@ -492,14 +496,13 @@ export function useConversationEngine() {
       }
 
       // Assistant placeholder for streaming
-      const placeholder = st.appendMessage({
+      placeholder = st.appendMessage({
         conversationId: activeId,
         role: 'assistant',
         text: '',
         partial: true,
       });
 
-      try {
         const ctx = await buildContext(activeId);
         if (cleanImages.length > 0) ctx.images = cleanImages;
         const stream = provider.sendMessage(text, ctx);
@@ -636,13 +639,16 @@ export function useConversationEngine() {
         useMayaStore.getState().setAvatarOverride(null);
         useMayaStore.getState().pushMayaTurn(finalText);
         await speak(finalText);
+        return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Request failed';
         if (/401|unauthorized/i.test(message)) useAuthStore.getState().logout();
-        useConversationStore.getState().updateMessage(placeholder.id, {
-          text: 'I lost the connection for a moment. Try again?',
-          partial: false,
-        });
+        if (placeholder) {
+          useConversationStore.getState().updateMessage(placeholder.id, {
+            text: 'I lost the connection for a moment. Try again?',
+            partial: false,
+          });
+        }
         useConversationStore.getState().setError({
           code: /credential|key/i.test(message) ? 'invalid-key' : 'ai-timeout',
           message,
@@ -650,6 +656,7 @@ export function useConversationEngine() {
         });
         useMayaStore.getState().setActivity('idle');
         useConversationStore.getState().setConvState('connected');
+        return true;
       } finally {
         processingRef.current = false;
       }
@@ -833,6 +840,7 @@ export function useConversationEngine() {
       handleVadStart,
       handleVadEnd,
       isSpeaking: () => speakingRef.current,
+      isProcessing: () => processingRef.current,
       state: {
         conv: conv.convState,
         connection: conv.connection,
