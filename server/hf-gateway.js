@@ -521,6 +521,13 @@ async function handleChat(req, res) {
   if (!hf.ok) {
     const detail = await hf.text().catch(() => '');
     console.log(`[chat] model=${model} msgs=${messages.length} → upstream ${hf.status} (${Date.now() - t0}ms) :: ${detail.slice(0, 160)}`);
+    if (hf.status === 429) {
+      const m = detail.match(/retry in ([\d.]+)s/i);
+      return json(res, 429, {
+        error: 'rate-limited',
+        retryAfter: m ? Math.max(1, Math.ceil(Number(m[1]))) : 60,
+      });
+    }
     return json(res, 502, { error: 'hf-error', status: hf.status, detail: detail.slice(0, 500) });
   }
   const data = await hf.json().catch(() => null);
@@ -566,8 +573,8 @@ async function handleChatStream(req, res) {
     return res.end();
   }
   if (!hf.ok || !hf.body) {
-    console.log(`[stream] model=${model} → upstream fail`);
-    res.writeHead(502, headers);
+    console.log(`[stream] model=${model} → upstream ${hf ? hf.status : 'no-body'}`);
+    res.writeHead(hf && hf.status === 429 ? 429 : 502, headers);
     res.write('data: [DONE]\n\n');
     return res.end();
   }

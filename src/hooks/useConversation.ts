@@ -650,7 +650,11 @@ export function useConversationEngine() {
           });
         }
         useConversationStore.getState().setError({
-          code: /credential|key/i.test(message) ? 'invalid-key' : 'ai-timeout',
+          code: /credential|key/i.test(message)
+            ? 'invalid-key'
+            : /rate.?limit|\(429\)/.test(message)
+              ? 'rate-limit'
+              : 'ai-timeout',
           message,
           recoverable: true,
         });
