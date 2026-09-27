@@ -400,8 +400,45 @@ function splitSentences(text, max = 180) {
   return out;
 }
 
-/** Gateway voice: sentence-chunked MP3s (keyless provider), base64 JSON. */
+/** ElevenLabs: lifelike voice (Rachel = natural female, default). */
+async function elevenLabsTts(text) {
+  const clean = String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 2500);
+  if (!clean) return { audios: [] };
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+  const model = process.env.ELEVENLABS_MODEL || 'eleven_multilingual_v2';
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': process.env.ELEVENLABS_API_KEY ?? '',
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text: clean,
+        model_id: model,
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`elevenlabs ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 1000) throw new Error('elevenlabs empty audio');
+  return { audios: [buf.toString('base64')] };
+}
+
+/** Gateway voice: ElevenLabs when configured, else keyless sentence MP3s. */
 async function toolTts(text) {
+  // Realistic voice first: ElevenLabs (single full-reply synthesis =
+  // better prosody than sentence chunks). Falls through on any failure.
+  if (process.env.ELEVENLABS_API_KEY) {
+    try {
+      return await elevenLabsTts(text);
+    } catch (err) {
+      console.log(`[tts] elevenlabs failed, falling back: ${String(err).slice(0, 120)}`);
+    }
+  }
   const parts = splitSentences(text).slice(0, 8);
   if (parts.length === 0) return { audios: [] };
   const audios = [];
