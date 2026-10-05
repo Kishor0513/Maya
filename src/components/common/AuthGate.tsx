@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useAuthStore } from '../../stores/authStore';
+import { isCloudAuth } from '../../services/supabaseClient';
 
-// Full-screen gate shown when the gateway requires accounts (USERS set)
-// and this browser has no session yet.
+// Full-screen gate shown when the backend requires accounts and this
+// browser has no session yet. Cloud mode signs in with email via Supabase.
 export function AuthGate() {
+  const cloud = isCloudAuth();
   const login = useAuthStore((s) => s.login);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -28,10 +30,10 @@ export function AuthGate() {
           This Maya server needs an account. Sign in to continue.
         </p>
         <label htmlFor="auth-user" className="mt-5 block text-xs uppercase tracking-widest text-zinc-500">
-          Username
+          {cloud ? 'Email' : 'Username'}
         </label>
         <input
-          id="auth-user" value={username} autoFocus autoComplete="username"
+          id="auth-user" value={username} autoFocus autoComplete={cloud ? 'email' : 'username'}
           onChange={(e) => setUsername(e.target.value)}
           className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white focus:outline-none focus:border-violet-300/50"
         />
@@ -45,7 +47,7 @@ export function AuthGate() {
         />
         {bad && (
           <p role="alert" className="mt-3 text-sm text-rose-300">
-            Wrong username or password. Try again?
+            Wrong {cloud ? 'email' : 'username'} or password. Try again?
           </p>
         )}
         <button
