@@ -11,7 +11,7 @@
 //   DROP: computer/* (local-machine only), scrypt/USERS login (Supabase Auth),
 //         sqlite (Postgres directly), in-process rate limits (platform-level).
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_KEY') ?? '';
@@ -24,9 +24,14 @@ const UPSTREAM_KEY = Deno.env.get('UPSTREAM_KEY') ?? '';
 const ALLOWED_ORIGIN = Deno.env.get('ALLOWED_ORIGIN') ?? '';
 const MAX_BODY = 1_000_000;
 
-const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-  auth: { persistSession: false },
-});
+const admin = createClient(
+  SUPABASE_URL,
+  // Supabase auto-provisions SUPABASE_SERVICE_ROLE_KEY (not ..._SERVICE_KEY).
+  Deno.env.get('SUPABASE_SERVICE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+  {
+    auth: { persistSession: false },
+  },
+);
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
