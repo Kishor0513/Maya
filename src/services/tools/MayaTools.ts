@@ -213,6 +213,24 @@ export const MAYA_TOOLS: MayaTool[] = [
       if (!text) throw new Error('Reminder needs text');
       const at = parseWhen(whenRaw);
       if (!at) throw new Error('Could not parse time — use "in N minutes" or "at HH:MM"');
+      // Prefer server-owned reminders (cross-device + push); fall back local.
+      try {
+        const res = await fetch(`${API_BASE}/api/reminders`, {
+          method: 'POST',
+          headers: gatewayHeaders({ 'Content-Type': 'application/json' }),
+          credentials: 'include',
+          body: JSON.stringify({ text, at }),
+        });
+        if (res.ok) {
+          const saved = (await res.json()) as { id?: string };
+          if (saved && typeof saved.id === 'string') return { scheduled: true, at, text, server: true };
+        } else if (at - Date.now() > 7 * 86400000) {
+          throw new Error('Too far ahead (max 7 days without server)');
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith('Too far')) throw e;
+        /* fall through to local scheduling */
+      }
       if (at - Date.now() > 7 * 86400000) throw new Error('Too far ahead (max 7 days)');
       try {
         if ('Notification' in window && Notification.permission === 'default') {

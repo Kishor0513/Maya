@@ -11,6 +11,8 @@ import { useSettingsStore, sttLang } from '../stores/settingsStore';
 import { useMayaStore } from '../stores/mayaStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useAuthStore } from '../stores/authStore';
+import { trackEvent } from '../services/analytics';
+import { stashOutbox } from '../services/sync';
 import { getTool, describeWhen, callGatewayTool } from '../services/tools/MayaTools';
 import {
   parseComputerJobs, COMPUTER_TAG_RE, isBlocked, classifyRisk,
@@ -289,6 +291,9 @@ export function useConversationEngine() {
   const speakingRef = useRef(false);
   const processingRef = useRef(false);
   const spokenRef = useRef(0);
+  // Last outbound turn, for the offline outbox. Refs (not closure locals)
+  // so every catch path can reach them.
+  const pendingRef = useRef<{ text: string; images: string[]; conversationId: string | null } | null>(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -451,9 +456,10 @@ export function useConversationEngine() {
   }, []);
 
   const processTurn = useCallback(
-    async (rawText: string, images: string[] = []) => {
+    async (rawText: string, images: string[] = [], via: 'text' | 'voice' | 'suggestion' = 'text') => {
       const text = rawText.trim();
       if ((!text && images.length === 0) || processingRef.current) return false;
+      trackEvent('message_sent', { via, images: images.length });
       processingRef.current = true;
       abortRef.current?.abort();
       const abort = new AbortController();
@@ -470,7 +476,11 @@ export function useConversationEngine() {
 
       // User message (with attached images for multimodal models)
       const cleanImages = images
-        .filter((u) => typeof u === 'string' && u.startsWith('data:image/'))
+        .filter(
+          (u) =>
+            typeof u === 'string' &&
+            (u.startsWith('data:image/') || u.startsWith('https://')),
+        )
         .slice(0, 3);
       st.appendMessage({
         conversationId: activeId,
@@ -481,6 +491,7 @@ export function useConversationEngine() {
       st.setPartialUser('');
       st.setPartialMaya('');
       st.setConvState('processing');
+      pendingRef.current = { text, images: cleanImages, conversationId: activeId };
       useMayaStore.getState().setActivity('processing');
       useMayaStore.getState().pushUserTurn(text);
 
@@ -564,6 +575,7 @@ export function useConversationEngine() {
               resultLines.push(`${r.summary} → ${r.text}`);
               if (r.sources) allSources.push(...r.sources);
               toolCalls.push({ name: job.name, summary: r.summary });
+              trackEvent('tool_used', { tool: job.name });
             } catch (err) {
               const msg = err instanceof Error ? err.message : 'failed';
               resultLines.push(`${job.name} unavailable (${msg})`);
@@ -602,6 +614,7 @@ export function useConversationEngine() {
               resultLines.push(`${job.name} → ${r.text}`);
               if (r.images) followImages.push(...r.images);
               toolCalls.push({ name: job.name, summary: r.summary });
+              trackEvent('tool_used', { tool: job.name });
             } catch (err) {
               const msg = err instanceof Error ? err.message : 'failed';
               resultLines.push(`${job.name} unavailable (${msg})`);
@@ -643,6 +656,20 @@ export function useConversationEngine() {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Request failed';
         if (/401|unauthorized/i.test(message)) useAuthStore.getState().logout();
+        if (/failed to fetch|networkerror|load failed|network request failed|fetch failed|offline/i.test(message)) {
+          // Truly offline: stash for auto-retry, keep the input, say so plainly.
+          const pending = pendingRef.current;
+          if (pending) {
+            stashOutbox({ text: pending.text, images: pending.images, conversationId: pending.conversationId });
+          }
+          if (placeholder) {
+            useConversationStore.getState().updateMessage(placeholder.id, {
+              text: "Couldn't send — you're offline. It will retry when you're back.",
+              partial: false,
+            });
+          }
+          return true;
+        }
         if (placeholder) {
           useConversationStore.getState().updateMessage(placeholder.id, {
             text: 'I lost the connection for a moment. Try again?',
@@ -663,6 +690,7 @@ export function useConversationEngine() {
         return true;
       } finally {
         processingRef.current = false;
+        pendingRef.current = null;
       }
     },
     [buildContext, extractMemoriesLLM, provider, speak],
@@ -756,7 +784,7 @@ export function useConversationEngine() {
       speechToText.stop() ||
       useConversationStore.getState().partialUser.trim();
     useConversationStore.getState().setPartialUser('');
-    if (finalText.trim()) void processTurn(finalText);
+    if (finalText.trim()) void processTurn(finalText, [], 'voice');
     else {
       useMayaStore.getState().setActivity('idle');
       useConversationStore.getState().setConvState('connected');
@@ -792,7 +820,7 @@ export function useConversationEngine() {
       useConversationStore.getState().partialUser.trim();
     if (t.trim().length > 1) {
       useConversationStore.getState().setPartialUser('');
-      void processTurn(t);
+      void processTurn(t, [], 'voice');
     }
   }, [processTurn]);
 

@@ -17,6 +17,15 @@ import { PlansPanel } from '../components/plans/PlansPanel';
 import { AuthGate } from '../components/common/AuthGate';
 import { ApprovalDialog } from '../components/common/ApprovalDialog';
 import { ACCENTS } from '../features/appearance/accents';
+import {
+  pullConversations,
+  pushConversation,
+  subscribeSync,
+  peekOutbox,
+  clearOutbox,
+  checkDeliveredReminders,
+} from '../services/sync';
+import { trackEvent } from '../services/analytics';
 import { initReminders } from '../services/tools/MayaTools';
 import { useAuthStore } from '../stores/authStore';
 import { useConversationEngine } from '../hooks/useConversation';
@@ -119,6 +128,42 @@ export function App() {
     void probeAuth();
     initReminders();
   }, [probeAuth]);
+
+  // Cloud sync (only when signed in): pull on login, push debounced edits,
+  // realtime updates, delivered-reminder announcements, offline-outbox flush.
+  useEffect(() => {
+    if (!authToken) return;
+    void pullConversations();
+    void checkDeliveredReminders();
+    let pushTimer: number | undefined;
+    const unsubStore = useConversationStore.subscribe((s) => {
+      const id = s.activeId;
+      if (!id) return;
+      window.clearTimeout(pushTimer);
+      pushTimer = window.setTimeout(() => void pushConversation(id), 3000);
+    });
+    const unsubSync = subscribeSync(
+      () => void pullConversations(),
+      () => void checkDeliveredReminders(),
+    );
+    const flushOutbox = async () => {
+      if (!navigator.onLine) return;
+      const items = peekOutbox();
+      if (items.length === 0) return;
+      clearOutbox(items.map((i) => i.id));
+      for (const item of items.slice(0, 5)) {
+        await engine.processTurn(item.text, item.images ?? []);
+      }
+    };
+    window.addEventListener('online', flushOutbox);
+    void flushOutbox();
+    return () => {
+      window.clearTimeout(pushTimer);
+      unsubStore();
+      unsubSync();
+      window.removeEventListener('online', flushOutbox);
+    };
+  }, [authToken, engine]);
   const [permOpen, setPermOpen] = useState(false);
   const [micOn, setMicOn] = useState(false);
 
@@ -343,8 +388,9 @@ export function App() {
             partialUser={partialUser}
             convState={convState}
             onSuggestion={(t) => {
+              trackEvent('message_sent', { mode: 'suggestion' });
               setMicOn(true);
-              void engine.processTurn(t);
+              void engine.processTurn(t, [], 'suggestion');
             }}
           />
         </div>

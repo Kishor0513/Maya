@@ -28,6 +28,8 @@ interface ConversationStore {
   setActive: (id: string) => void;
   deleteConversation: (id: string) => void;
   clearAllConversations: () => void;
+  importConversation: (c: Conversation) => void;
+  replaceConversation: (c: Conversation) => void;
   appendMessage: (msg: Omit<ChatMessage, 'id' | 'timestamp'> & { id?: string }) => ChatMessage;
   updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
   activeConversation: () => Conversation | undefined;
@@ -76,6 +78,18 @@ export const useConversationStore = create<ConversationStore>()(
           return { conversations, activeId };
         }),
       clearAllConversations: () => set({ conversations: [], activeId: null }),
+      importConversation: (c) =>
+        set((st) =>
+          st.conversations.some((x) => x.id === c.id)
+            ? st
+            : { conversations: [c, ...st.conversations] },
+        ),
+      replaceConversation: (c) =>
+        set((st) => ({
+          conversations: st.conversations.some((x) => x.id === c.id)
+            ? st.conversations.map((x) => (x.id === c.id ? c : x))
+            : [c, ...st.conversations],
+        })),
 
       appendMessage: (msg) => {
         let id = get().activeId;

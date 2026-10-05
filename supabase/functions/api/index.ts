@@ -201,16 +201,38 @@ async function injectNotes(
       .eq('owner', owner)
       .or(orClause)
       .limit(3);
-    if (!hits || hits.length === 0) return messages;
+    // Embedding-cosine union: catches paraphrases the keywords miss.
+    const seen = new Set((hits ?? []).map((h) => `${h.doc as string}:${h.idx as number}`));
+    let extra: { doc: unknown; idx: unknown; text: unknown }[] = [];
+    try {
+      const qv = await embedOne(q);
+      if (qv) {
+        const { data: vecs } = await admin
+          .from('chunks')
+          .select('doc,idx,text,embedding')
+          .eq('owner', owner)
+          .not('embedding', 'is', null)
+          .limit(200);
+        extra = ((vecs ?? []) as Record<string, unknown>[])
+          .map((r) => ({ doc: r.doc, idx: r.idx, text: r.text, s: cosineSim(qv, toNumArray(r.embedding)) }))
+          .filter((x) => x.s > 0.35 && !seen.has(`${String(x.doc)}:${String(x.idx)}`))
+          .sort((a, b) => b.s - a.s)
+          .slice(0, 3);
+      }
+    } catch {
+      /* keyword hits alone */
+    }
+    const all = [...(hits ?? []), ...extra].slice(0, 5);
+    if (all.length === 0) return messages;
     const { data: docs } = await admin
       .from('docs')
       .select('id,title')
       .eq('owner', owner)
-      .in('id', hits.map((h) => h.doc as string));
+      .in('id', all.map((h) => h.doc as string));
     const titles = new Map((docs ?? []).map((d) => [d.id as string, d.title as string]));
     const note =
       `Relevant notes from the user's saved documents (use them if helpful, never mention this block):\n` +
-      hits
+      all
         .map(
           (h) =>
             `- [${titles.get(h.doc as string) ?? 'Note'}] ${String(h.text).slice(0, 500)}`,
@@ -364,6 +386,63 @@ async function elevenLabsTts(text: string, apiKey: string): Promise<unknown> {
   return { audios: [btoa(bin)] };
 }
 
+/** Native Gemini embeddings (the OpenAI-compat surface has no embed op). */
+async function embedOne(text: string): Promise<number[] | null> {
+  if (!UPSTREAM_KEY || !UPSTREAM_BASE.includes('googleapis.com')) return null;
+  try {
+    const res = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': UPSTREAM_KEY },
+        body: JSON.stringify({ content: { parts: [{ text: String(text ?? '').slice(0, 4000) }] } }),
+      },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => null)) as { embedding?: { values?: unknown } } | null;
+    const v = data?.embedding?.values;
+    if (!Array.isArray(v)) return null;
+    const nums = (v as unknown[]).map(Number).filter(Number.isFinite);
+    return nums.length > 10 ? nums : null;
+  } catch {
+    return null;
+  }
+}
+
+function cosineSim(a: number[], b: number[]): number {
+  if (a.length === 0 || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na <= 0 || nb <= 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+/** Coerce a stored vector (jsonb array) to numbers, or [] when unusable. */
+function toNumArray(v: unknown): number[] {
+  if (!Array.isArray(v)) return [];
+  const nums = (v as unknown[]).map(Number).filter(Number.isFinite);
+  return nums.length > 10 ? nums : [];
+}
+
+/** Best-effort observability insert — never fails the request. */
+function logCall(row: {
+  owner: string; model: string; latency_ms: number; prompt_chars: number;
+  completion_chars: number; tool?: string; error?: string;
+}): void {
+  try {
+    const p = admin.from('model_calls').insert({ ...row, created: Date.now() });
+    const w = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+    if (w) w.waitUntil(p.then(() => undefined).catch(() => undefined));
+    else void p.then(() => undefined).catch(() => undefined);
+  } catch {
+    /* observability must not break chat */
+  }
+}
+
 // ─── router ──────────────────────────────────────────────────────────────────
 
 function routePath(url: URL): string {
@@ -407,14 +486,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const messages = await injectNotes(user, toMessages(body));
     if (!messages) return json({ error: 'expected { messages } or { message }' }, 400, req);
     const model = pickModel(body);
+    const t0 = Date.now();
     let hf: Response;
     try {
       hf = await callUpstream(messages, model, false);
     } catch {
+      logCall({ owner: user, model, latency_ms: Date.now() - t0, prompt_chars: JSON.stringify(messages).length, completion_chars: 0, error: 'unreachable' });
       return json({ error: 'hf-unreachable' }, 502, req);
     }
     if (!hf.ok) {
       const detail = await hf.text().catch(() => '');
+      logCall({ owner: user, model, latency_ms: Date.now() - t0, prompt_chars: JSON.stringify(messages).length, completion_chars: 0, error: `upstream ${hf.status}` });
       if (hf.status === 429) {
         const m = detail.match(/retry in ([\d.]+)s/i);
         return json({ error: 'rate-limited', retryAfter: m ? Math.max(1, Math.ceil(Number(m[1]))) : 60 }, 429, req);
@@ -424,7 +506,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const data = (await hf.json().catch(() => null)) as {
       choices?: { message?: { content?: string } }[];
     } | null;
-    return json({ text: data?.choices?.[0]?.message?.content ?? '' }, 200, req);
+    const text = data?.choices?.[0]?.message?.content ?? '';
+    logCall({ owner: user, model, latency_ms: Date.now() - t0, prompt_chars: JSON.stringify(messages).length, completion_chars: text.length });
+    return json({ text }, 200, req);
   }
 
   // — chat stream (SSE relay) —
@@ -444,18 +528,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const messages = await injectNotes(user, toMessages(body));
     if (!messages) return new Response(null, { status: 400, headers: H });
     const model = pickModel(body);
+    const t0 = Date.now();
     let hf: Response;
     try {
       hf = await callUpstream(messages, model, true);
     } catch {
+      logCall({ owner: user, model, latency_ms: Date.now() - t0, prompt_chars: JSON.stringify(messages).length, completion_chars: 0, tool: 'stream', error: 'unreachable' });
       return new Response('data: [DONE]\n\n', { status: 502, headers: H });
     }
     if (!hf.ok || !hf.body) {
+      logCall({ owner: user, model, latency_ms: Date.now() - t0, prompt_chars: JSON.stringify(messages).length, completion_chars: 0, tool: 'stream', error: `upstream ${hf.status}` });
       return new Response('data: [DONE]\n\n', {
         status: hf.status === 429 ? 429 : 502,
         headers: H,
       });
     }
+    logCall({ owner: user, model, latency_ms: Date.now() - t0, prompt_chars: JSON.stringify(messages).length, completion_chars: 0, tool: 'stream' });
     const stream = new ReadableStream({
       async start(controller) {
         const reader = hf.body!.getReader();
@@ -542,6 +630,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .select()
       .single();
     if (error) return json({ error: 'db error' }, 502, req);
+    try {
+      const v = await embedOne(`${String(body.key ?? '')} ${String(body.value ?? '')}`);
+      if (v) await admin.from('memories').update({ embedding: v }).eq('id', body.id);
+    } catch {
+      /* vectors are enhancement-only */
+    }
     return json(memRow(data as Record<string, unknown>), 200, req);
   }
   const memMatch = path.match(/^\/memories\/([^/]+)$/);
@@ -577,6 +671,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
   if (req.method === 'GET' && path === '/memories/search') {
     const q = (url.searchParams.get('q') ?? '').slice(0, 200);
+    // Semantic first (embedding cosine), keyword fillers after.
+    try {
+      const qv = await embedOne(q);
+      if (qv) {
+        const { data: withVec } = await admin
+          .from('memories')
+          .select('*')
+          .eq('owner', user)
+          .not('embedding', 'is', null)
+          .limit(200);
+        const ranked = ((withVec ?? []) as Record<string, unknown>[])
+          .map((r) => ({ row: r, s: cosineSim(qv, toNumArray(r.embedding)) }))
+          .filter((x) => x.s > 0.3)
+          .sort((a, b) => b.s - a.s)
+          .slice(0, 6);
+        if (ranked.length > 0) return json(ranked.map((x) => memRow(x.row)), 200, req);
+      }
+    } catch {
+      /* fall through to keyword search */
+    }
     const terms = Array.from(
       new Set((q.toLowerCase().match(/[a-z0-9\u0900-\u097f]{3,}/giu) ?? []).slice(0, 6)),
     );
@@ -620,6 +734,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const chunks = chunkText(text.slice(0, 20000));
     if (chunks.length > 0) {
       await admin.from('chunks').insert(chunks.map((c, i) => ({ doc: id, idx: i, text: c, owner: user })));
+      try {
+        for (const [i, c] of chunks.slice(0, 5).entries()) {
+          const v = await embedOne(c);
+          if (v) await admin.from('chunks').update({ embedding: v }).eq('doc', id).eq('idx', i);
+        }
+      } catch {
+        /* enhancement-only */
+      }
     }
     return json({ id, title, chunks: chunks.length }, 200, req);
   }
@@ -629,6 +751,57 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!data || (data as unknown[]).length === 0) return json({ error: 'not-found' }, 404, req);
     await admin.from('chunks').delete().eq('doc', decodeURIComponent(docMatch[1]));
     return new Response(null, { status: 204, headers: H });
+  }
+
+  // — reminders (server-owned; pg_cron delivers cross-device) —
+  if (req.method === 'GET' && path === '/reminders') {
+    const { data } = await admin
+      .from('reminders')
+      .select('id,text,at,created')
+      .eq('owner', user)
+      .eq('delivered', false)
+      .order('at', { ascending: true });
+    return json(data ?? [], 200, req);
+  }
+  if (req.method === 'POST' && path === '/reminders') {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(req);
+    } catch {
+      return json({ error: 'invalid JSON body' }, 400, req);
+    }
+    const text = String(body.text ?? '').trim().slice(0, 200);
+    const at = Number(body.at);
+    if (!text) return json({ error: 'reminder needs text' }, 400, req);
+    if (!Number.isFinite(at) || at <= Date.now() || at - Date.now() > 30 * 86400000) {
+      return json({ error: 'bad time (must be future, within 30 days)' }, 400, req);
+    }
+    const id = crypto.randomUUID();
+    await admin.from('reminders').insert({ id, owner: user, text, at, delivered: false, created: Date.now() });
+    return json({ id, text, at, scheduled: true }, 200, req);
+  }
+  const remMatch = path.match(/^\/reminders\/([^/]+)$/);
+  if (remMatch && req.method === 'DELETE') {
+    await admin.from('reminders').delete().eq('id', decodeURIComponent(remMatch[1])).eq('owner', user);
+    return new Response(null, { status: 204, headers: H });
+  }
+  if (req.method === 'GET' && path === '/push-key') {
+    return json({ publicKey: Deno.env.get('VAPID_PUBLIC_KEY') ?? '' }, 200, req);
+  }
+  if (req.method === 'POST' && path === '/push-subscriptions') {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(req);
+    } catch {
+      return json({ error: 'invalid JSON body' }, 400, req);
+    }
+    const endpoint = String(body.endpoint ?? '');
+    const keys = body.keys;
+    if (!endpoint.startsWith('https://') || typeof keys !== 'object' || !keys) {
+      return json({ error: 'need a push endpoint + keys' }, 400, req);
+    }
+    await admin.from('push_subscriptions').upsert({ endpoint, owner: user, keys, created: Date.now() });
+    return json({ saved: true }, 200, req);
   }
 
   // — tools —

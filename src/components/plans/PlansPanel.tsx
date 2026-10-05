@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   listReminders,
   cancelReminder,
@@ -7,6 +7,144 @@ import {
   describeWhen,
 } from '../../services/tools/MayaTools';
 import { loadAudit } from '../../services/computer';
+import { gatewayHeaders } from '../../services/gateway';
+
+const API_BASE =
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || '';
+
+function urlToUint8(base64: string): Uint8Array<ArrayBuffer> {
+  const pad = '='.repeat((4 - (base64.length % 4)) % 4);
+  const bin = atob(base64.replace(/-/g, '+').replace(/_/g, '/') + pad);
+  const out = new Uint8Array(new ArrayBuffer(bin.length));
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+interface ServerReminder {
+  id: string;
+  text: string;
+  at: number;
+}
+
+/** Server-owned reminders (cross-device + push) with notification opt-in. */
+function ServerReminders() {
+  const [items, setItems] = useState<ServerReminder[]>([]);
+  const [supported, setSupported] = useState(true);
+  const [notify, setNotify] = useState<'unknown' | 'on' | 'off'>('unknown');
+
+  const load = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/reminders`, {
+        headers: gatewayHeaders(),
+        credentials: 'include',
+      });
+      if (res.status === 404) {
+        setSupported(false);
+        return;
+      }
+      if (!res.ok) return;
+      const arr = (await res.json()) as unknown;
+      if (Array.isArray(arr)) {
+        setItems(
+          arr
+            .filter(
+              (r): r is ServerReminder =>
+                !!r && typeof (r as ServerReminder).id === 'string',
+            )
+            .slice(0, 20),
+        );
+      }
+    } catch {
+      /* offline — local reminders below still work */
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    try {
+      setNotify('Notification' in window && Notification.permission === 'granted' ? 'on' : 'off');
+    } catch {
+      setNotify('off');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const cancelServer = async (id: string) => {
+    try {
+      await fetch(`${API_BASE}/api/reminders/${id}`, {
+        method: 'DELETE',
+        headers: gatewayHeaders(),
+        credentials: 'include',
+      });
+    } catch {
+      /* ignore */
+    }
+    setItems((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const enableNotify = async () => {
+    try {
+      if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        setNotify('off');
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const keyRes = await fetch(`${API_BASE}/api/push-key`, {
+        headers: gatewayHeaders(),
+        credentials: 'include',
+      });
+      const { publicKey } = ((await keyRes.json()) as { publicKey?: string }) ?? {};
+      if (!publicKey) return;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlToUint8(publicKey),
+      });
+      const json = sub.toJSON();
+      await fetch(`${API_BASE}/api/push-subscriptions`, {
+        method: 'POST',
+        headers: gatewayHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
+        body: JSON.stringify({ endpoint: sub.endpoint, keys: json.keys }),
+      });
+      setNotify('on');
+    } catch {
+      /* ignore */
+    }
+  };
+
+  if (!supported) return null;
+  return (
+    <>
+      <div className="mt-5 mb-2 flex items-center justify-between">
+        <h3 className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+          Synced reminders ({items.length})
+        </h3>
+        {notify !== 'on' && (
+          <button
+            type="button"
+            onClick={enableNotify}
+            className="rounded-full border border-white/10 px-3 py-1 text-[11px] text-zinc-300 hover:bg-white/5 hover:text-white"
+          >
+            Enable notifications
+          </button>
+        )}
+      </div>
+      {items.length === 0 ? (
+        <p className="text-sm text-zinc-600">
+          Server reminders appear here on every device. Ask Maya to remind you of something.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((r) => (
+            <Row key={r.id} title={r.text} sub={describeWhen(r.at)} onCancel={() => cancelServer(r.id)} />
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
 
 // Plans panel — upcoming reminders + calendar events (both local).
 export function PlansPanel({ onClose }: { onClose: () => void }) {
@@ -55,6 +193,8 @@ export function PlansPanel({ onClose }: { onClose: () => void }) {
             ))}
           </ul>
         )}
+
+        <ServerReminders />
 
         <h3 className="mt-5 mb-2 text-[11px] uppercase tracking-[0.18em] text-zinc-500">
           Recent computer activity ({audit.length})

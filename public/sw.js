@@ -64,3 +64,37 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match('/index.html')),
   );
 });
+
+self.addEventListener('push', (event) => {
+  let title = 'Maya reminder';
+  let body = 'Open the app to see it.';
+  try {
+    const data = event.data ? event.data.json() : null;
+    if (data && typeof data.title === 'string') title = data.title;
+    if (data && typeof data.body === 'string') body = data.body;
+  } catch {
+    /* keep defaults */
+  }
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: '/icon.svg',
+      badge: '/icon.svg',
+      data: { url: '/' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const c of clients) {
+        if ('focus' in c) return c.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+      return undefined;
+    }),
+  );
+});

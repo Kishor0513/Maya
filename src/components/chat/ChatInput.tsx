@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react';
+import { trackEvent } from '../../services/analytics';
+import { supabaseCloud, isCloudAuth } from '../../services/supabaseClient';
 
 /** Downscale an image client-side so multimodal sends stay small. */
 function resizeImage(file: File, maxDim = 768, quality = 0.82): Promise<string> {
@@ -49,6 +51,7 @@ export function ChatInput({
   const send = async () => {
     const t = value.trim();
     if ((!t && images.length === 0) || disabled) return;
+    trackEvent('message_sent', { mode: 'text', images: images.length });
     const accepted = await onSend(t, images);
     // false = engine busy — keep the text so nothing is silently lost.
     if (accepted === false) return;
@@ -63,6 +66,28 @@ export function ChatInput({
       const next: string[] = [];
       for (const f of Array.from(files).slice(0, 3 - images.length)) {
         if (!f.type.startsWith('image/')) continue;
+        // Cloud mode: upload to Storage (keeps localStorage small); else embed.
+        if (isCloudAuth()) {
+          try {
+            const sb = await supabaseCloud();
+            const user = (await sb?.auth.getUser())?.data.user;
+            if (sb && user) {
+              const safe = f.name.replace(/[^a-z0-9.]+/gi, '-').slice(0, 60) || 'image';
+              const path = `${user.id}/${Date.now()}-${safe}`;
+              const { error } = await sb.storage.from('chat-images').upload(path, f, {
+                contentType: f.type,
+                upsert: false,
+              });
+              if (!error) {
+                const { data } = sb.storage.from('chat-images').getPublicUrl(path);
+                next.push(data.publicUrl);
+                continue;
+              }
+            }
+          } catch {
+            /* fall through to local data URL */
+          }
+        }
         next.push(await resizeImage(f));
       }
       setImages((prev) => [...prev, ...next].slice(0, 3));
