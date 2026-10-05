@@ -56,7 +56,7 @@ no proxy, and no CORS at runtime:
 npm install
 npm run build        # once (rebuild after frontend changes)
 set -a; source server/.env; set +a
-node server/hf-gateway.js   # → open http://localhost:8787
+node server/gateway.js   # → open http://localhost:8787
 ```
 
 Just talk — Talk and Chat views, voice, memory, streaming, and interruption
@@ -77,7 +77,7 @@ auto-listen apply in both.
    UPSTREAM_KEY=AIzaSy_paste_yours_here
    UPSTREAM_MODEL=gemini-3.6-flash
    ```
-3. `set -a; source server/.env; set +a; node server/hf-gateway.js` → health at `curl localhost:8787/api/health`.
+3. `set -a; source server/.env; set +a; node server/gateway.js` → health at `curl localhost:8787/api/health`.
 4. `npm run dev` → http://localhost:5173. The app is Gemini-only: Settings shows the fixed provider, endpoint `/api` (proxied to the gateway in dev).
 
 ### Backend contract

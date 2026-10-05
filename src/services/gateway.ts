@@ -1,6 +1,6 @@
 import { useAuthStore } from '../stores/authStore';
 
-// Shared-secret header for the gateway (see server/hf-gateway.js).
+// Shared-secret header for the gateway (see server/gateway.js).
 // Baked in at build time via VITE_GATEWAY_TOKEN. Omit it and no header
 // is sent (local dev stays exactly as before).
 const TOKEN = import.meta.env.VITE_GATEWAY_TOKEN as string | undefined;

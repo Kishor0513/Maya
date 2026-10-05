@@ -1,30 +1,25 @@
 /**
- * Maya reference backend — pluggable AI brain (Hugging Face / Google Gemini / local).
+ * Maya reference backend — pluggable AI brain (Google Gemini / local).
  *
  * Zero dependencies, Node 18+. Forwards Maya's backend contract onto any
  * OpenAI-compatible chat-completions endpoint, and keeps a tiny in-memory
  * memory store so the Memory panel works end-to-end.
  * (Swap the Map for a real DB before production.)
  *
- * Run (Hugging Face):
- *   HF_TOKEN=hf_xxx HF_MODEL=Qwen/Qwen2.5-7B-Instruct node server/hf-gateway.js
- *
  * Run (Google Gemini — free key from aistudio.google.com → Get API key):
- *   UPSTREAM_BASE=https://generativelanguage.googleapis.com/v1beta/openai \
- *   UPSTREAM_KEY=AIzaSy_xxx UPSTREAM_MODEL=gemini-3.6-flash node server/hf-gateway.js
- *   # or: set -a; source server/.env; set +a; node server/hf-gateway.js
+ *   UPSTREAM_KEY=AIzaSy_xxx UPSTREAM_MODEL=gemini-3.6-flash node server/gateway.js
+ *   # or: set -a; source server/.env; set +a; node server/gateway.js
  *
  * Run (local Ollama / vLLM — no key):
- *   UPSTREAM_BASE=http://localhost:11434/v1 UPSTREAM_MODEL=qwen2.5:3b node server/hf-gateway.js
+  *   UPSTREAM_BASE=http://localhost:11434/v1 UPSTREAM_MODEL=qwen2.5:3b node server/gateway.js
  *
  * Then in Maya: Settings → AI Provider → pick the matching backend,
  * endpoint "/api" (Vite proxies it here in dev), model = your model ID.
  *
  * Env:
- *   UPSTREAM_BASE  brain endpoint (HF router, Gemini OpenAI-compat, or local)
+  *   UPSTREAM_BASE  brain endpoint (Gemini OpenAI-compat, or local)
  *   UPSTREAM_KEY   server-side key, sent as Bearer or x-goog-api-key (auto)
  *   UPSTREAM_MODEL default model when the client doesn't specify one
- *   HF_TOKEN / HF_MODEL / HF_BASE  legacy aliases for the HF setup above
  *   USERS      optional multi-user gate, e.g. USERS="alice:pw1,bob:pw2"
  *              (home-grade; empty = open single-user mode)
  *   COMPUTER_TOOLS=true   enable local computer control (screenshots, shell,
@@ -54,19 +49,17 @@ const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN ?? '';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '';
 const UPSTREAM_BASE = (
   process.env.UPSTREAM_BASE ??
-  process.env.HF_BASE ??
-  'https://router.huggingface.co/v1'
+  'https://generativelanguage.googleapis.com/v1beta/openai'
 ).replace(/\/$/, '');
 const UPSTREAM_MODEL =
-  process.env.UPSTREAM_MODEL ?? process.env.HF_MODEL ?? 'Qwen/Qwen2.5-7B-Instruct';
-const UPSTREAM_KEY = process.env.UPSTREAM_KEY ?? process.env.HF_TOKEN ?? '';
-// All OpenAI-compatible endpoints (HF router, Gemini /openai, Ollama, vLLM)
+  process.env.UPSTREAM_MODEL ?? 'gemini-3.6-flash';
+const UPSTREAM_KEY = process.env.UPSTREAM_KEY ?? '';
+// All OpenAI-compatible endpoints (Gemini /openai, Ollama, vLLM)
 // authenticate with a Bearer token. Set UPSTREAM_AUTH=x-goog-api-key only
 // when talking to Google's native (non-OpenAI) endpoints.
 const UPSTREAM_AUTH = process.env.UPSTREAM_AUTH ?? 'bearer';
-// Local upstreams need no key; huggingface.co and googleapis.com always do.
-const needsAuth =
-  UPSTREAM_BASE.includes('huggingface.co') || UPSTREAM_BASE.includes('googleapis.com');
+// Local upstreams need no key; googleapis.com always does.
+const needsAuth = UPSTREAM_BASE.includes('googleapis.com');
 
 function authHeaders() {
   if (!UPSTREAM_KEY) return {};
@@ -960,7 +953,7 @@ async function handle(req, res) {
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((err) => {
-    console.error('[hf-gateway]', err);
+    console.error('[gateway]', err);
     if (!res.headersSent) json(res, 500, { error: 'gateway-error' });
     else res.end();
   });
@@ -969,7 +962,7 @@ const server = http.createServer((req, res) => {
 server.on('error', (err) => {
   if (err && typeof err === 'object' && 'code' in err && err.code === 'EADDRINUSE') {
     console.error(
-      `[hf-gateway] port ${PORT} is already in use — use the running server or set PORT to a free one.`,
+      `[gateway] port ${PORT} is already in use — use the running server or set PORT to a free one.`,
     );
     process.exit(1);
   }
@@ -977,5 +970,5 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[hf-gateway] listening on http://localhost:${PORT} (model: ${UPSTREAM_MODEL} via ${UPSTREAM_BASE})`);
+  console.log(`[gateway] listening on http://localhost:${PORT} (model: ${UPSTREAM_MODEL} via ${UPSTREAM_BASE})`);
 });
