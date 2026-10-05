@@ -66,7 +66,6 @@ function ServerReminders() {
     } catch {
       setNotify('off');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const cancelServer = async (id: string) => {
