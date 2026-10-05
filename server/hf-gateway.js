@@ -38,7 +38,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { exec, execFile } from 'node:child_process';
-import { store, STORE_KIND, parseUsers, verifyUser, issueToken, verifyFileUser, chunkText, cosineSim } from './store.js';
+import { store, STORE_KIND, parseUsers, verifyUser, issueToken, verifyFileUser, chunkText, cosineSim } from './store_supabase.js';
 
 const USERS = parseUsers();
 const authEnabled = USERS.size > 0;
@@ -164,9 +164,9 @@ function bearerToken(req) {
 }
 
 /** Owner id for scoping data. Open mode (no USERS) → shared 'local'. */
-function ownerOf(req) {
+async function ownerOf(req) {
   if (!authEnabled) return 'local';
-  return store.userForToken(bearerToken(req)) ?? 'local';
+  return await store.userForToken(bearerToken(req)) ?? 'local';
 }
 
 // Optional: serve the built app (npm run build → dist/) from the SAME origin
@@ -468,7 +468,7 @@ async function injectNotes(owner, messages) {
   try {
     const q = lastUserText(messages);
     if (!q || q.length < 4) return messages;
-    const fts = store.searchChunks(owner, q, 3);
+    const fts = await store.searchChunks(owner, q, 3);
     let extra = [];
     try {
       const qv = await embedOne(q);
@@ -481,7 +481,7 @@ async function injectNotes(owner, messages) {
           .sort((a, b) => b.s - a.s)
           .slice(0, 3)
           .filter((c) => !seen.has(`${c.doc}:${c.idx}`));
-        extra = store.withTitles(owner, ranked);
+        extra = await store.withTitles(owner, ranked);
       }
     } catch {
       /* embeddings unavailable — FTS alone */
@@ -529,7 +529,7 @@ function indexMemoryVec(owner, saved) {
   void (async () => {
     try {
       const v = await embedOne(`${saved.key ?? ''} ${saved.value ?? ''}`);
-      if (v) store.saveMemoryVec(saved.id, v);
+      if (v) await store.saveMemoryVec(saved.id, v);
     } catch {
       /* embeddings unavailable — TF-IDF/FTS still work */
     }
@@ -544,7 +544,7 @@ async function handleChat(req, res) {
   } catch {
     return json(res, 400, { error: 'invalid JSON body' });
   }
-  const messages = await injectNotes(ownerOf(req), toMessages(body));
+  const messages = await injectNotes(await ownerOf(req), toMessages(body));
   if (!messages) return json(res, 400, { error: 'expected { messages } or { message }' });
   const model = pickModel(body);
   const t0 = Date.now();
@@ -594,7 +594,7 @@ async function handleChatStream(req, res) {
     return res.end();
   }
   // Body must be fully read before we can start the SSE response.
-  const messages = await injectNotes(ownerOf(req), toMessages(body));
+  const messages = await injectNotes(await ownerOf(req), toMessages(body));
   if (!messages) {
     res.writeHead(400, headers);
     return res.end();
@@ -682,7 +682,7 @@ async function handle(req, res) {
     url.pathname.startsWith('/api/') &&
     url.pathname !== '/api/health' &&
     url.pathname !== '/api/login' &&
-    !store.userForToken(bearerToken(req))
+    !(await store.userForToken(bearerToken(req)))
   ) {
     return json(res, 401, { error: 'unauthorized' });
   }
@@ -707,7 +707,7 @@ async function handle(req, res) {
         return json(res, 401, { error: 'invalid credentials' });
       }
       const token = issueToken();
-      store.saveToken(token, username);
+      await store.saveToken(token, username);
       return json(res, 200, { token, user: username });
     } catch {
       return json(res, 400, { error: 'invalid JSON body' });
@@ -717,14 +717,14 @@ async function handle(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/chat/stream') return handleChatStream(req, res);
 
   if (req.method === 'GET' && url.pathname === '/api/memories') {
-    return json(res, 200, store.listMemories(ownerOf(req)));
+    return json(res, 200, await store.listMemories(await ownerOf(req)));
   }
   if (req.method === 'POST' && url.pathname === '/api/memories') {
     try {
       const m = await readJson(req);
       if (!m || typeof m.id !== 'string') return json(res, 400, { error: 'memory needs an id' });
-      const owner = ownerOf(req);
-      const saved = store.upsertMemory(owner, m);
+      const owner = await ownerOf(req);
+      const saved = await store.upsertMemory(owner, m);
       indexMemoryVec(owner, saved);
       return json(res, 200, saved);
     } catch {
@@ -734,16 +734,16 @@ async function handle(req, res) {
   const memMatch = url.pathname.match(/^\/api\/memories\/([^/]+)$/);
   if (memMatch) {
     const id = decodeURIComponent(memMatch[1]);
-    const owner = ownerOf(req);
+    const owner = await ownerOf(req);
     if (req.method === 'DELETE') {
-      store.deleteMemory(owner, id);
+      await store.deleteMemory(owner, id);
       res.writeHead(204);
       return res.end();
     }
     if (req.method === 'PATCH') {
       try {
         const patch = await readJson(req);
-        const updated = store.patchMemory(owner, id, patch);
+        const updated = await store.patchMemory(owner, id, patch);
         if (!updated) return json(res, 404, { error: 'not-found' });
         return json(res, 200, updated);
       } catch {
@@ -753,7 +753,7 @@ async function handle(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/documents') {
-    return json(res, 200, store.listDocs(ownerOf(req)));
+    return json(res, 200, await store.listDocs(await ownerOf(req)));
   }
   if (req.method === 'POST' && url.pathname === '/api/documents') {
     try {
@@ -761,8 +761,8 @@ async function handle(req, res) {
       const text = String(body.text ?? '').trim();
       if (!text) return json(res, 400, { error: 'empty document' });
       const title = String(body.title ?? '').trim().slice(0, 120) || text.slice(0, 40) || 'Untitled note';
-      const owner = ownerOf(req);
-      const created = store.createDoc(owner, title, text.slice(0, 20000));
+      const owner = await ownerOf(req);
+      const created = await store.createDoc(owner, title, text.slice(0, 20000));
       void (async () => {
         try {
           const pairs = [];
@@ -770,7 +770,7 @@ async function handle(req, res) {
             const v = await embedOne(c);
             if (v) pairs.push([i, v]);
           }
-          if (pairs.length > 0) store.saveChunkVecs(created.id, pairs);
+          if (pairs.length > 0) await store.saveChunkVecs(created.id, pairs);
         } catch {
           /* ignore — FTS covers retrieval */
         }
@@ -782,7 +782,7 @@ async function handle(req, res) {
   }
   const docMatch = url.pathname.match(/^\/api\/documents\/([^/]+)$/);
   if (docMatch && req.method === 'DELETE') {
-    const ok = store.deleteDoc(ownerOf(req), decodeURIComponent(docMatch[1]));
+    const ok = await store.deleteDoc(await ownerOf(req), decodeURIComponent(docMatch[1]));
     if (!ok) return json(res, 404, { error: 'not-found' });
     res.writeHead(204);
     return res.end();
@@ -791,7 +791,7 @@ async function handle(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/memories/search') {
     try {
       const q = (url.searchParams.get('q') ?? '').slice(0, 200);
-      const owner = ownerOf(req);
+      const owner = await ownerOf(req);
       const qv = await embedOne(q);
       if (!qv) return json(res, 200, []);
       const ranked = store

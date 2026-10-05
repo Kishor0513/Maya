@@ -197,3 +197,23 @@ npm run lint      # eslint (no any, strict hooks)
 `npm run build` → serve `dist/` statically; terminate WS at your gateway;
 set `VITE_API_URL` / `VITE_REALTIME_URL` at build time. Lazy-load nothing
 special — the bundle is React + zustand only (~150 kB gz est.).
+
+### Vercel frontend + Supabase backend (split)
+
+The static frontend **can** live on Vercel; the Node gateway **cannot** — it
+needs always-on hosting (Render/Railway/Fly/VPS) for the Gemini key, SSE
+streaming, and Supabase service-role access. Supabase itself is already
+hosted (your project), so this is a two-service deploy:
+
+- **Gateway first** (Render/Railway/Fly/VPS): env `UPSTREAM_*` (Gemini),
+  `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`
+  (server-only, never `VITE_`-prefixed), plus optional `GATEWAY_TOKEN`,
+  `ALLOWED_ORIGIN=https://your-app.vercel.app`, `USERS`. Note its URL,
+  e.g. `https://maya-gw.onrender.com`.
+- **Frontend on Vercel**: import the repo. Build `npm ci && npm run build`,
+  output `dist`. Environment — set **before building** (Vite bakes them in):
+  `VITE_API_URL=https://maya-gw.onrender.com`,
+  `VITE_GATEWAY_TOKEN=<same as gateway>` if the gateway sets one.
+- Rebuild + redeploy the frontend whenever these vars change. Chat, voice,
+  streaming, memory, docs, and tools all flow through the gateway; Supabase
+  holds memories/docs/tokens server-side. The mic needs HTTPS on both ends.
