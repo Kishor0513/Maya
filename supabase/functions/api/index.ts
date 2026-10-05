@@ -300,9 +300,19 @@ async function toolWeather(args: unknown): Promise<unknown> {
 }
 
 async function toolTts(text: unknown): Promise<unknown> {
-  const parts = String(text ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!clean) return { audios: [] };
+  // ElevenLabs first when configured: one full-reply synthesis (Rachel =
+  // natural female default) with far better prosody than sentence chunks.
+  const elevenKey = Deno.env.get('ELEVENLABS_API_KEY') ?? '';
+  if (elevenKey) {
+    try {
+      return await elevenLabsTts(clean, elevenKey);
+    } catch {
+      /* fall through to the keyless voice */
+    }
+  }
+  const parts = clean
     .split(/(?<=[.!?])\s+/)
     .filter(Boolean)
     .flatMap((p) => (p.length > 180 ? [p.slice(0, 180)] : [p]))
@@ -322,6 +332,36 @@ async function toolTts(text: unknown): Promise<unknown> {
     audios.push(btoa(bin));
   }
   return { audios };
+}
+
+/** ElevenLabs lifelike voice. Throws on any failure so callers fall back. */
+async function elevenLabsTts(text: string, apiKey: string): Promise<unknown> {
+  const clean = text.slice(0, 2500);
+  const voiceId =
+    Deno.env.get('ELEVENLABS_VOICE_ID') || '21m00Tcm4TlvDq8ikWAM'; // Rachel (female)
+  const model = Deno.env.get('ELEVENLABS_MODEL') || 'eleven_multilingual_v2';
+  const res = await fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+    {
+      method: 'POST',
+      headers: {
+        'xi-api-key': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text: clean,
+        model_id: model,
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`elevenlabs ${res.status}`);
+  const buf = new Uint8Array(await res.arrayBuffer());
+  if (buf.length < 1000) throw new Error('elevenlabs empty audio');
+  let bin = '';
+  for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+  return { audios: [btoa(bin)] };
 }
 
 // ─── router ──────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ChatMessage } from '../../types';
 import { formatTime } from '../../utils/format';
+import { Markdown } from './Markdown';
 
 export function TranscriptMessage({ message }: { message: ChatMessage }) {
   const mine = message.role === 'user';
@@ -16,10 +17,17 @@ export function TranscriptMessage({ message }: { message: ChatMessage }) {
         <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500 mb-1">
           {mine ? 'You' : 'Maya'} · {formatTime(message.timestamp)}
         </p>
-        <p className="text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap">
-          {message.text}
-          {message.partial && <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-violet-300 align-middle" />}
-        </p>
+        {mine ? (
+          <p className="text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap">
+            {message.text}
+            {message.partial && <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-violet-300 align-middle" />}
+          </p>
+        ) : (
+          <div className="text-[15px] leading-relaxed text-zinc-100">
+            <Markdown text={message.text} className="[&_p]:my-1 [&_p]:first:mt-0 [&_p]:last:mb-0" />
+            {message.partial && <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-violet-300 align-middle" />}
+          </div>
+        )}
         {message.images && message.images.length > 0 && (
           <div className="mb-1 mt-2 grid grid-cols-3 gap-1.5">
             {message.images.map((src, i) => (

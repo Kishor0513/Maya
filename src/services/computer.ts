@@ -92,14 +92,46 @@ export function parseComputerJobs(text: string): ComputerJob[] {
   return out;
 }
 
-async function post(path: string, body: unknown): Promise<unknown> {
-  const res = await fetch(`${API_BASE}/api/computer/${path}`, {
+/**
+ * Hybrid routing: try the configured backend first; when the cloud answers
+ * "computer-local-only" (or is unreachable), retry once against a local
+ * gateway — computer control only makes sense on the user's own machine.
+ * Set VITE_LOCAL_URL to override; defaults to localhost:8787 outside local
+ * pages. Never silently downgrades safety refusals (403s always surface).
+ */
+function localBase(): string | null {
+  const configured = (import.meta.env.VITE_LOCAL_URL as string | undefined)?.replace(/\/$/, '');
+  if (configured) return configured === API_BASE ? null : configured;
+  if (
+    typeof window !== 'undefined' &&
+    /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)
+  ) {
+    return null; // already talking to a local gateway
+  }
+  return 'http://localhost:8787';
+}
+
+function shouldFallback(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    /computer-local-only|computer tools are disabled|failed to fetch|networkerror|load failed|cancelled/i.test(
+      e.message,
+    )
+  );
+}
+
+async function postOnce(base: string, path: string, body: unknown): Promise<unknown> {
+  const res = await fetch(`${base}/api/computer/${path}`, {
     method: 'POST',
     headers: gatewayHeaders({ 'Content-Type': 'application/json' }),
     credentials: 'include',
     body: JSON.stringify(body),
   });
-  if (res.status === 501) throw new Error('computer tools are disabled on the gateway');
+  if (res.status === 501) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (data?.error === 'computer-local-only') throw new Error('computer-local-only');
+    throw new Error('computer tools are disabled on the gateway');
+  }
   if (res.status === 403) {
     const data = (await res.json().catch(() => null)) as { reason?: string } | null;
     throw new Error(data?.reason ?? 'refused by safety policy');
@@ -108,15 +140,39 @@ async function post(path: string, body: unknown): Promise<unknown> {
   return (await res.json()) as unknown;
 }
 
-async function get(path: string): Promise<unknown> {
-  const res = await fetch(`${API_BASE}/api/computer/${path}`, {
+async function post(path: string, body: unknown): Promise<unknown> {
+  try {
+    return await postOnce(API_BASE, path, body);
+  } catch (e) {
+    const local = localBase();
+    if (!shouldFallback(e) || !local) throw e;
+    return postOnce(local, path, body);
+  }
+}
+
+async function getOnce(base: string, path: string): Promise<unknown> {
+  const res = await fetch(`${base}/api/computer/${path}`, {
     headers: gatewayHeaders(),
     credentials: 'include',
   });
-  if (res.status === 501) throw new Error('computer tools are disabled on the gateway');
+  if (res.status === 501) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (data?.error === 'computer-local-only') throw new Error('computer-local-only');
+    throw new Error('computer tools are disabled on the gateway');
+  }
   if (res.status === 403) throw new Error('refused by safety policy');
   if (!res.ok) throw new Error(`computer tool failed (${res.status})`);
   return (await res.json()) as unknown;
+}
+
+async function get(path: string): Promise<unknown> {
+  try {
+    return await getOnce(API_BASE, path);
+  } catch (e) {
+    const local = localBase();
+    if (!shouldFallback(e) || !local) throw e;
+    return getOnce(local, path);
+  }
 }
 
 export function computerStatus(): Promise<ComputerStatus | null> {

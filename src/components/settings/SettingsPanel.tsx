@@ -112,9 +112,27 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
                 placeholder="/api" className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white" />
             </div>
           </div>
+          <p className="mb-1.5 mt-3 text-xs uppercase tracking-widest text-zinc-500">Model presets</p>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Model presets">
+            {([
+              ['gemini-3.6-flash', 'Gemini Flash'],
+              ['gpt-4o', 'GPT-4o'],
+              ['anthropic/claude-sonnet-4', 'Claude Sonnet'],
+              ['meta-llama/llama-3.3-70b-instruct', 'Llama 3.3'],
+            ] as const).map(([slug, label]) => (
+              <button key={slug} type="button"
+                onClick={() => s.updateNested('ai', { model: slug })}
+                aria-pressed={s.ai.model === slug}
+                className={`rounded-full border px-3 py-1.5 text-xs ${s.ai.model === slug ? 'border-violet-300/60 bg-violet-300/15 text-white' : 'border-white/10 text-zinc-400 hover:bg-white/5 hover:text-white'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">
             Your Gemini key stays on your backend gateway — the browser only talks to `/api`.
-            Never paste a vendor API key here.
+            Never paste a vendor API key here. Non-Gemini presets need a matching
+            OpenAI-compatible upstream (e.g. OpenRouter) configured gateway-side —
+            the model name alone doesn&apos;t switch providers.
           </p>
         </Section>
 

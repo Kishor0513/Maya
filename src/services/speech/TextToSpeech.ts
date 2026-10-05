@@ -87,21 +87,24 @@ export class TextToSpeech {
 
 export const textToSpeech = new TextToSpeech();
 
-/** Map Maya's emotional state to subtle TTS parameters. Never exaggerated. */
+/** Map Maya's emotional state to subtle TTS parameters. Never exaggerated.
+ * `depth` is the user's expressiveness setting (0..1): 0 flattens delivery
+ * toward neutral, 1 lets emotion swing fully. Default matches the slider. */
 export function emotionToVoice(e: {
   excitement: number;
   mood: number;
   energy: number;
   concern: number;
-}): VoiceEmotion {
+}, depth = 0.7): VoiceEmotion {
+  const d = 0.3 + Math.min(1, Math.max(0, depth));
   const speed =
-    1 + e.excitement * 0.12 + e.energy * 0.06 - e.concern * 0.1 - (e.mood < 0 ? 0.06 : 0);
-  const pitch = 1 + e.excitement * 0.08 - e.concern * 0.06;
+    1 + (e.excitement * 0.12 + e.energy * 0.06 - e.concern * 0.1 - (e.mood < 0 ? 0.06 : 0)) * d;
+  const pitch = 1 + (e.excitement * 0.08 - e.concern * 0.06) * d;
   return {
     speed: clamp(speed, 0.85, 1.2),
     pitch: clamp(pitch, 0.9, 1.15),
     stability: 0.7,
-    expressiveness: clamp(0.5 + e.excitement * 0.3 + e.energy * 0.2, 0, 1),
+    expressiveness: clamp((0.5 + e.excitement * 0.3 + e.energy * 0.2) * (0.4 + depth), 0, 1),
   };
 }
 

@@ -393,7 +393,7 @@ export function useConversationEngine() {
       mood: emotion.mood,
       energy: emotion.energy,
       concern: emotion.concern,
-    });
+    }, s.voice.expressiveness);
     // Skip what streaming speech already voiced (sentence-by-sentence).
     const already = spokenRef.current;
     const body = already > 0 ? (already < text.length ? text.slice(already).trim() : '') : text;
@@ -532,7 +532,7 @@ export function useConversationEngine() {
                 const em = useMayaStore.getState().emotion;
                 const vv = emotionToVoice({
                   excitement: em.excitement, mood: em.mood, energy: em.energy, concern: em.concern,
-                });
+                }, sNow.voice.expressiveness);
                 void textToSpeech
                   .speak(next.text, {
                     rate: sNow.voice.speed * vv.speed,

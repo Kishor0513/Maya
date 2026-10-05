@@ -43,6 +43,85 @@ body {
   }
 }
 
+/* Animations toggle (Settings → Appearance). Kills motion app-wide. */
+.no-anim *,
+.no-anim *::before,
+.no-anim *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* ---- Light theme (opt-in via .theme-light on the app root) ----
+ * The app is dark-first; this layer remaps the major surfaces and text
+ * shades so the Light/System setting actually takes effect. */
+.theme-light {
+  color-scheme: light;
+}
+.theme-light.maya-noise {
+  background: #f3f0ea !important;
+  color: #1c1917 !important;
+}
+.theme-light.maya-noise::after {
+  opacity: 0.035;
+}
+.theme-light aside {
+  background-color: rgba(255, 255, 255, 0.94) !important;
+}
+.theme-light div.bg-\[\#0B0B0F\] {
+  background-color: #fffdf9 !important;
+}
+.theme-light .text-white {
+  color: #1c1917 !important;
+}
+.theme-light .text-zinc-100 {
+  color: #292524 !important;
+}
+.theme-light .text-zinc-200 {
+  color: #44403c !important;
+}
+.theme-light .text-zinc-300 {
+  color: #57534e !important;
+}
+.theme-light .text-zinc-400 {
+  color: #78716c !important;
+}
+.theme-light .text-zinc-500,
+.theme-light .text-zinc-600 {
+  color: #a8a29e !important;
+}
+.theme-light .placeholder\:text-zinc-600::placeholder {
+  color: #a8a29e !important;
+}
+.theme-light .border-white\/10,
+.theme-light .border-white\/\[0\.07\],
+.theme-light .border-white\/\[0\.08\] {
+  border-color: rgba(28, 25, 23, 0.12) !important;
+}
+.theme-light .bg-white\/\[0\.03\],
+.theme-light .bg-white\/\[0\.04\],
+.theme-light .bg-white\/\[0\.05\],
+.theme-light .bg-white\/\[0\.07\],
+.theme-light .bg-white\/\[0\.11\] {
+  background-color: rgba(28, 25, 23, 0.045) !important;
+}
+.theme-light .bg-black\/40,
+.theme-light .bg-black\/50 {
+  background-color: rgba(255, 255, 255, 0.75) !important;
+}
+.theme-light .hover\:bg-white\/5:hover,
+.theme-light .hover\:bg-white\/10:hover {
+  background-color: rgba(28, 25, 23, 0.06) !important;
+}
+.theme-light .text-violet-300 {
+  color: #6d28d9 !important;
+}
+.theme-light .maya-range {
+  background: rgba(28, 25, 23, 0.14);
+}
+.theme-light ::-webkit-scrollbar-thumb {
+  background: rgba(28, 25, 23, 0.18);
+}
+
 /* Range inputs */
 .maya-range {
   -webkit-appearance: none;

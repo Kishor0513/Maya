@@ -2,12 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatMessage, ConversationState } from '../../types';
 import { formatTime, cx } from '../../utils/format';
 import { VoiceOrb } from '../avatar/VoiceOrb';
+import { Markdown } from './Markdown';
 
 const SUGGESTIONS: { label: string; send: string }[] = [
   { label: 'Just say hi', send: 'Hey Maya!' },
   { label: 'Tell me a joke', send: 'Tell me a joke.' },
   { label: 'Check in with me', send: 'How are you doing today?' },
+  { label: 'What can you do?', send: 'What can you actually do for me?' },
+  { label: 'How is the weather?', send: 'What is the weather like in Kathmandu?' },
+  { label: 'Remind me later', send: 'Remind me to stretch in 10 minutes.' },
 ];
+
+function daypart(): string {
+  const h = new Date().getHours();
+  if (h < 5) return 'Up late';
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
 
 // Full chat thread — the text-first counterpart to the voice stage.
 // Consumes the same message store + engine, so voice and typing interoperate.
@@ -51,6 +63,12 @@ export function ChatView({
 
   const empty = messages.length === 0 && !partialUser;
 
+  // Rotate a fresh trio of starters on every mount.
+  const shownSuggestions = useMemo(
+    () => [...SUGGESTIONS].sort(() => Math.random() - 0.5).slice(0, 3),
+    [],
+  );
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
@@ -63,12 +81,12 @@ export function ChatView({
         <div className="mx-auto w-full max-w-2xl space-y-4 px-1 py-5">
           {empty ? (
             <div className="py-10 text-center">
-              <p className="font-display text-3xl italic text-zinc-100">Talk to Maya.</p>
+              <p className="font-display text-2xl italic text-zinc-100 sm:text-3xl">Talk to Maya.</p>
               <p className="mt-2 text-sm text-zinc-500">
-                Ask her something. Tell her something. Or just say hi.
+                {daypart()}. Ask her something, tell her something — or tap the mic and just talk.
               </p>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
-                {SUGGESTIONS.map((s) => (
+                {shownSuggestions.map((s) => (
                   <button
                     key={s.label}
                     type="button"
@@ -123,7 +141,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
   if (mine) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md border border-violet-200/15 bg-violet-300/[0.14] px-4 py-2.5">
+        <div className="max-w-[92%] rounded-2xl rounded-br-md border border-violet-200/15 bg-violet-300/[0.14] px-4 py-2.5 sm:max-w-[85%]">
           <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-100">
             {message.text}
           </p>
@@ -139,17 +157,18 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       <div className="mt-0.5 shrink-0" aria-hidden>
         <VoiceOrb state={message.partial ? 'speaking' : 'idle'} level={message.partial ? 0.4 : 0.05} size={28} />
       </div>
-      <div className="min-w-0 max-w-[88%]">
+      <div className="min-w-0 max-w-[92%] sm:max-w-[88%]">
         <p className="mb-1 text-[11px] uppercase tracking-[0.14em] text-zinc-500">
           Maya · {formatTime(message.timestamp)}
         </p>
         <div className="rounded-2xl rounded-tl-md border border-white/[0.07] bg-white/[0.04] px-4 py-2.5">
-          <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-100">
-            {message.text}
-            {message.partial && (
-              <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-violet-300 align-middle" aria-hidden />
-            )}
-          </p>
+          <Markdown
+            text={message.text}
+            className="text-[15px] leading-relaxed text-zinc-100 [&_p]:my-1 [&_p]:first:mt-0 [&_p]:last:mb-0"
+          />
+          {message.partial && (
+            <span className="ml-1 inline-block h-4 w-[2px] animate-pulse bg-violet-300 align-middle" aria-hidden />
+          )}
           {message.images && message.images.length > 0 && (
             <div className="mb-1 mt-2 grid grid-cols-3 gap-1.5">
               {message.images.map((src, i) => (

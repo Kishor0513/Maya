@@ -62,7 +62,7 @@ export function MayaAvatar({
     <div
       role="img"
       aria-label={`Maya is ${state}`}
-      className="relative mx-auto h-56 w-56 select-none sm:h-64 sm:w-64"
+      className="relative mx-auto h-44 w-44 select-none sm:h-64 sm:w-64"
       style={{ opacity: mood.dim }}
     >
       {/* Ambient glow */}

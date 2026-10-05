@@ -62,7 +62,22 @@ export function App() {
   const ambient = useSettingsStore((s) => s.appearance.ambientEffects);
   const accent = useSettingsStore((s) => s.appearance.accent);
   const avatarStyle = useSettingsStore((s) => s.appearance.avatarStyle);
+  const themePref = useSettingsStore((s) => s.appearance.theme);
+  const animationsOn = useSettingsStore((s) => s.appearance.animations);
   const glow = ACCENTS[accent] ?? ACCENTS.violet;
+  const [systemDark, setSystemDark] = useState(
+    () =>
+      typeof window === 'undefined' ||
+      !window.matchMedia ||
+      window.matchMedia('(prefers-color-scheme: dark)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const isLight = themePref === 'light' || (themePref === 'system' && !systemDark);
   const userName = useSettingsStore((s) => s.userName);
 
   const avatarState = useMayaStore((s) => s.avatarState);
@@ -165,7 +180,7 @@ export function App() {
   const lastMayaText = [...messages].reverse().find((m) => m.role === 'assistant')?.text;
 
   return (
-    <div className="maya-noise relative flex h-full min-h-[100dvh] overflow-hidden bg-[#050505] text-white">
+    <div className={`maya-noise relative flex h-full min-h-[100dvh] overflow-hidden bg-[#050505] text-white${isLight ? ' theme-light' : ''}${animationsOn ? '' : ' no-anim'}`}>
       {/* Ambient cinematic background */}
       {ambient && (
         <div aria-hidden className="pointer-events-none absolute inset-0">
@@ -235,7 +250,7 @@ export function App() {
                 role="tab"
                 aria-selected={view === t.id}
                 onClick={() => switchView(t.id)}
-                className={`rounded-full px-5 py-1.5 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 ${
+                className={`rounded-full px-4 py-1.5 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 ${
                   view === t.id
                     ? 'bg-violet-300/90 font-medium text-black'
                     : 'text-zinc-400 hover:text-white'

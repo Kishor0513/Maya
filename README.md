@@ -27,14 +27,17 @@ Browser (React + TS + Tailwind + Web Audio)
 - **See images** — attach photos in chat; the model grounds answers in them
 - **Remember** — long-term memory (inspect/edit/forget) + knowledge documents
   with retrieval, per-user when accounts are enabled
-- **Sound like herself** — system voice (female auto-pick) or cloud voice,
-  emotion-mapped rate/pitch, interruption-safe playback
+- **Sound like herself** — system voice (female auto-pick) or cloud voice
+  (gateway MP3, or lifelike ElevenLabs with a key), emotion-mapped rate/pitch
+  with an expressiveness-depth slider, interruption-safe playback
 - **Express** — state-driven avatar (orb/halo/prism × violet/ocean/ember),
   real-amplitude waveform, typing indicator, streaming text
 - **Privacy controls** — login gate on shared servers, export chats (Markdown/JSON),
   mic/storage/memory status, PWA installable
 - **Computer control (opt-in)** — screenshots, shell, apps, workspace files with
-  per-action approval, hard blocklist, and audit log (see below)
+  per-action approval, hard blocklist, and audit log (see below). When the cloud
+  backend answers computer-local-only, the app automatically retries your local
+  gateway (`VITE_LOCAL_URL`, defaults to localhost:8787) — hybrid by default.
 
 No vendor secrets in the frontend. The browser talks to **your backend
 gateway** (`/api/*`, `WS /api/realtime`), which holds provider keys, runs the
@@ -68,7 +71,7 @@ waveform) and **Chat** (full message thread with streaming bubbles, typing
 indicator, and suggestion chips). Voice keeps working in Chat — interrupt and
 auto-listen apply in both.
 
-## Backend setup (Google Gemini — the only brain)
+## Backend setup (Google Gemini — the default brain)
 
 1. Get a free key at **aistudio.google.com → Get API key**.
 2. `cp server/.env.example server/.env`, then set:
@@ -79,6 +82,21 @@ auto-listen apply in both.
    ```
 3. `set -a; source server/.env; set +a; node server/gateway.js` → health at `curl localhost:8787/api/health`.
 4. `npm run dev` → http://localhost:5173. The app is Gemini-only: Settings shows the fixed provider, endpoint `/api` (proxied to the gateway in dev).
+
+### Switching models
+
+Any OpenAI-compatible endpoint works — only the gateway env changes, plus the
+model preset in Settings → AI Provider. Example (OpenRouter, one key, 100+ models):
+
+```bash
+UPSTREAM_BASE=https://openrouter.ai/api/v1
+UPSTREAM_KEY=sk-or-paste_yours_here
+UPSTREAM_MODEL=anthropic/claude-sonnet-4   # or openai/gpt-4o, meta-llama/llama-3.3-70b-instruct, …
+```
+
+Local models work too (`UPSTREAM_BASE=http://localhost:11434/v1`, e.g. Ollama,
+no key). Embeddings/RAG stay lexical there since vector search needs the Gemini
+embedding endpoint.
 
 ### Backend contract
 
@@ -120,6 +138,9 @@ recent messages + summary + retrieved memories + emotion/relationship state.
 - Wake word (beta, Settings): while the mic is on, "hey maya" switches her to listening.
 - Voice (Settings): system voice with female auto-pick, or cloud voice (gateway MP3).
   Replies start speaking sentence-by-sentence as they stream (toggleable).
+  The expressiveness slider scales how much emotion moves rate and pitch.
+  For a lifelike voice, set `ELEVENLABS_API_KEY` (+ optional `ELEVENLABS_VOICE_ID`)
+  on the gateway — cloud voice then synthesizes the whole reply in one take.
 - Chrome/Edge have the best Web Speech STT; Safari/Firefox fall back to
   recorder + server STT via `audio.chunk`.
 
