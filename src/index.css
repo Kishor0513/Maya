@@ -415,3 +415,156 @@ body {
 .theme-light ::-webkit-scrollbar-thumb {
   background: rgba(28, 25, 23, 0.18);
 }
+
+/* ============================================================
+ * Visual polish layer (CSS-only UI refresh).
+ * Typography, depth, motion, and control refinements.
+ * ============================================================ */
+
+/* Text selection + display type */
+::selection {
+  background: rgba(196, 181, 253, 0.35);
+}
+.theme-light ::selection {
+  background: rgba(109, 40, 217, 0.22);
+}
+.font-display {
+  text-wrap: balance;
+  letter-spacing: 0.01em;
+}
+
+/* Entrance motion */
+@keyframes maya-dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes maya-toast-in {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+[role="dialog"] > div,
+[role="dialog"] > form,
+[role="alertdialog"] > div {
+  animation: maya-dialog-in 0.22s ease both;
+}
+div[role="alert"].fixed {
+  animation: maya-toast-in 0.25s ease both;
+}
+
+/* Buttons with physical feedback */
+.btn-accent {
+  box-shadow: 0 6px 24px -8px var(--accent), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.btn-accent:active {
+  transform: translateY(1px) scale(0.99);
+}
+.chip:hover {
+  transform: translateY(-1px);
+}
+.chip:active {
+  transform: translateY(0);
+}
+.icon-btn:hover {
+  transform: translateY(-1px);
+}
+.icon-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+
+/* Cards gain depth on hover where interactive */
+.suggest-card:hover {
+  box-shadow: var(--shadow-soft);
+}
+.glass-panel {
+  box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.theme-light .glass-panel {
+  box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.dialog-card {
+  box-shadow: var(--shadow-pop), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Composer presence */
+.composer {
+  box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.theme-light .composer {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* Message rhythm */
+.msg-user,
+.msg-maya {
+  box-shadow: 0 2px 14px -8px rgba(0, 0, 0, 0.6);
+}
+.prose-maya pre {
+  box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+.theme-light .prose-maya pre {
+  background: rgba(28, 25, 23, 0.05);
+  box-shadow: none;
+}
+.theme-light .prose-maya code {
+  background: rgba(28, 25, 23, 0.07);
+  color: #5b21b6;
+}
+
+/* Controls polish */
+.maya-range {
+  height: 5px;
+  cursor: pointer;
+}
+.maya-range::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.12s ease;
+}
+.maya-range::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.theme-light .maya-range::-webkit-slider-thumb {
+  background: #6d28d9;
+  box-shadow: 0 0 12px rgba(109, 40, 217, 0.45);
+}
+input[type="text"],
+input:not([type]),
+textarea {
+  caret-color: var(--accent);
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(28, 25, 23, 0.3);
+}
+
+/* Segmented control polish */
+.seg button[aria-selected="true"] {
+  box-shadow: 0 4px 16px -6px var(--accent);
+}
+
+/* Sidebar rows */
+aside nav button[aria-current="true"] {
+  box-shadow: inset 2px 0 0 var(--accent), var(--shadow-soft);
+}
+
+/* Respect reduced motion + the in-app animations toggle */
+@media (prefers-reduced-motion: reduce) {
+  [role="dialog"] > div,
+  [role="dialog"] > form,
+  [role="alertdialog"] > div,
+  div[role="alert"].fixed {
+    animation: none !important;
+  }
+}
+.no-anim [role="dialog"] > div,
+.no-anim [role="dialog"] > form,
+.no-anim [role="alertdialog"] > div,
+.no-anim div[role="alert"].fixed {
+  animation: none !important;
+}
