@@ -46,7 +46,11 @@ const PORT = Number(process.env.PORT ?? 8787);
 const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN ?? '';
 // Optional CORS lockdown: when set, only this origin is allowed.
 // Default (empty) reflects the caller, which is fine for local dev.
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN ?? '';
+const ALLOWED_ORIGIN = (() => {
+  const v = (process.env.ALLOWED_ORIGIN ?? '').trim().replace(/\/$/, '');
+  if (!v) return '';
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+})();
 const UPSTREAM_BASE = (
   process.env.UPSTREAM_BASE ??
   'https://generativelanguage.googleapis.com/v1beta/openai'

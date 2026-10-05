@@ -21,7 +21,11 @@ const UPSTREAM_BASE = (
 ).replace(/\/$/, '');
 const UPSTREAM_MODEL = Deno.env.get('UPSTREAM_MODEL') ?? 'gemini-3.6-flash';
 const UPSTREAM_KEY = Deno.env.get('UPSTREAM_KEY') ?? '';
-const ALLOWED_ORIGIN = Deno.env.get('ALLOWED_ORIGIN') ?? '';
+const ALLOWED_ORIGIN = (() => {
+  const v = (Deno.env.get('ALLOWED_ORIGIN') ?? '').trim().replace(/\/$/, '');
+  if (!v) return '';
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+})();
 const MAX_BODY = 1_000_000;
 
 const admin = createClient(
