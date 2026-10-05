@@ -626,9 +626,3 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   return json({ error: 'not-found' }, 404, req);
 });
-
-function pickModel(body: Record<string, unknown>): string {
-  return typeof body.model === 'string' && body.model.trim()
-    ? body.model.trim()
-    : UPSTREAM_MODEL;
-}
