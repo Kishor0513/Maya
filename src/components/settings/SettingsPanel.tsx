@@ -87,14 +87,36 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const conv = useConversationStore();
   const [confirmClear, setConfirmClear] = useState(false);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <div role="dialog" aria-modal="true" aria-label="Settings" className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-xl max-h-[86vh] overflow-y-auto dialog-card p-6">
-        <div className="flex items-start justify-between">
-          <h2 className="font-display text-3xl italic text-white">Settings</h2>
-          <button onClick={onClose} aria-label="Close settings" className="rounded-full p-2 text-zinc-500 hover:text-white">✕</button>
+    <div
+      role="dialog" aria-modal="true" aria-label="Settings"
+      className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/70 backdrop-blur-sm p-3 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="dialog-card max-h-[94vh] w-full max-w-4xl overflow-y-auto p-4 sm:p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-display text-2xl italic text-white sm:text-3xl">Settings</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn-accent px-6 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+          >
+            Done
+          </button>
         </div>
 
+        <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         <Section title="AI Provider">
           <span className="text-xs uppercase tracking-widest text-zinc-500">Provider</span>
           <div className="mt-1.5 w-full rounded-xl border border-violet-300/30 bg-violet-300/[0.08] px-3 py-2.5 text-sm text-white">
@@ -264,6 +286,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             Export all conversations (JSON)
           </button>
         </Section>
+        </div>
       </div>
     </div>
   );
@@ -275,8 +298,8 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="mt-6 border-t border-white/[0.07] pt-4">
-      <h3 className="mb-3 text-[11px] uppercase tracking-[0.2em] text-zinc-500">{title}</h3>
+    <section className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3.5">
+      <h3 className="mb-2 text-[11px] uppercase tracking-[0.2em] text-zinc-500">{title}</h3>
       {children}
     </section>
   );
