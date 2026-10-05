@@ -28,6 +28,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useMayaStore } from '../stores/mayaStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { STATE_LABEL } from '../features/conversation/machine';
+import { Analytics } from '@vercel/analytics/react';
 
 type View = 'talk' | 'chat';
 
@@ -381,6 +382,7 @@ export function App() {
         onReconnect={() => { setError(null); window.location.reload(); }}
       />
       {!onboarded && <Onboarding onDone={() => undefined} />}
+      <Analytics />
     </div>
   );
 }
