@@ -98,7 +98,7 @@ export function ChatInput({
           ))}
         </div>
       )}
-      <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.05] backdrop-blur-xl px-4 py-2.5 focus-within:border-violet-300/40 transition-colors">
+      <div className="composer flex items-end gap-2 px-3 py-2.5 sm:px-4">
         <input
           ref={fileRef}
           type="file"
@@ -140,7 +140,7 @@ export function ChatInput({
           onClick={send}
           disabled={disabled || (!value.trim() && images.length === 0)}
           aria-label="Send message"
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-violet-300/90 text-black disabled:opacity-30 hover:bg-violet-200 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
+          className="btn-accent grid h-10 w-10 shrink-0 place-items-center disabled:opacity-30 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-200"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M12 19V5" />

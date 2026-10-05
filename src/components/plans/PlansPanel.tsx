@@ -19,7 +19,7 @@ export function PlansPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Plans" className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md max-h-[84vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0B0B0F] p-6 shadow-soft">
+      <div className="w-full max-w-md max-h-[84vh] overflow-y-auto dialog-card p-6">
         <div className="flex items-start justify-between">
           <div>
             <h2 className="font-display text-3xl italic text-white">Plans</h2>

@@ -89,7 +89,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Settings" className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-xl max-h-[86vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0B0B0F] p-6 shadow-soft">
+      <div className="w-full max-w-xl max-h-[86vh] overflow-y-auto dialog-card p-6">
         <div className="flex items-start justify-between">
           <h2 className="font-display text-3xl italic text-white">Settings</h2>
           <button onClick={onClose} aria-label="Close settings" className="rounded-full p-2 text-zinc-500 hover:text-white">✕</button>

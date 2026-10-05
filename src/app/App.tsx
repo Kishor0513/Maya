@@ -181,13 +181,15 @@ export function App() {
 
   return (
     <div className={`maya-noise relative flex h-full min-h-[100dvh] overflow-hidden bg-[#050505] text-white${isLight ? ' theme-light' : ''}${animationsOn ? '' : ' no-anim'}`}>
-      {/* Ambient cinematic background */}
+      {/* Aurora cinematic background */}
       {ambient && (
-        <div aria-hidden className="pointer-events-none absolute inset-0">
-          <div className="absolute left-1/2 top-[-20%] h-[60vh] w-[90vw] -translate-x-1/2 rounded-full blur-[120px]"
+        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute left-1/2 top-[-25%] h-[65vh] w-[95vw] -translate-x-1/2 rounded-full blur-[110px]"
             style={{ background: `radial-gradient(closest-side, ${glow.ambientA}, transparent)` }} />
-          <div className="absolute bottom-[-25%] left-[8%] h-[50vh] w-[50vw] rounded-full blur-[120px]"
+          <div className="absolute bottom-[-30%] left-[-10%] h-[55vh] w-[60vw] rounded-full blur-[110px]"
             style={{ background: `radial-gradient(closest-side, ${glow.ambientB}, transparent)` }} />
+          <div className="absolute right-[-15%] top-[30%] h-[45vh] w-[40vw] rounded-full blur-[130px] opacity-70"
+            style={{ background: `radial-gradient(closest-side, ${glow.ambientA}, transparent)` }} />
         </div>
       )}
 
@@ -201,19 +203,21 @@ export function App() {
       />
 
       <main className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        {/* Header */}
-        <header className="flex shrink-0 items-center justify-between gap-3 px-4 pt-4 sm:px-6">
-          <div className="flex items-center gap-3">
+        {/* Header — floating glass pill */}
+        <header className="z-10 flex shrink-0 justify-center px-3 pt-3 sm:px-6 sm:pt-4">
+          <div className="glass-panel flex w-full max-w-2xl items-center justify-between gap-2 rounded-full py-1.5 pl-2 pr-1.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => setSidebar(true)}
               aria-label="Open conversations"
-              className="rounded-full border border-white/10 bg-white/[0.05] p-2.5 text-zinc-300 hover:bg-white/10 lg:hidden"
+              className="icon-btn h-9 w-9 lg:hidden"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
                 <path d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
             <p className="font-display text-xl italic lg:hidden">Maya</p>
+            <p className="font-display hidden text-xl italic lg:block">Maya</p>
           </div>
           <div className="flex items-center gap-2">
             <ConnectionIndicator status={connection} />
@@ -221,7 +225,7 @@ export function App() {
               onClick={() => setSettingsOpen(true)}
               aria-label="Settings"
               title="Settings"
-              className="rounded-full border border-white/10 bg-white/[0.05] p-2.5 text-zinc-300 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
+              className="icon-btn h-9 w-9"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <circle cx="12" cy="12" r="3" />
@@ -229,14 +233,15 @@ export function App() {
               </svg>
             </button>
           </div>
+          </div>
         </header>
 
         {/* Stage */}
-        <div className="flex shrink-0 justify-center px-4 pt-1">
+        <div className="flex shrink-0 justify-center px-4 pt-2">
           <div
             role="tablist"
             aria-label="Talk or chat"
-            className="flex rounded-full border border-white/10 bg-white/[0.05] p-1 backdrop-blur"
+            className="seg shadow-soft"
           >
             {(
               [
@@ -250,11 +255,7 @@ export function App() {
                 role="tab"
                 aria-selected={view === t.id}
                 onClick={() => switchView(t.id)}
-                className={`rounded-full px-4 py-1.5 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300 ${
-                  view === t.id
-                    ? 'bg-violet-300/90 font-medium text-black'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
+                className="focus-visible:ring-2 focus-visible:ring-violet-300 focus:outline-none"
               >
                 {t.label}
               </button>
@@ -276,8 +277,8 @@ export function App() {
             variant={avatarStyle}
           />
 
-          <div className="min-h-[3.5rem] max-w-xl">
-            <p aria-live="polite" className="font-display text-2xl italic text-zinc-100 sm:text-[1.7rem]">
+          <div className="min-h-[4rem] max-w-xl px-2">
+            <p aria-live="polite" className="font-display text-3xl italic leading-tight text-zinc-100 sm:text-4xl">
               {convState === 'processing' ? 'Thinking…' : statusText}
             </p>
             {partialUser && convState === 'listening' && (
@@ -313,14 +314,14 @@ export function App() {
             <button
               onClick={() => { newConversation(); }}
               title="New conversation (Ctrl+N)"
-              className="rounded-full border border-white/10 px-4 py-1.5 text-xs text-zinc-400 hover:bg-white/5 hover:text-white"
+              className="btn-ghost px-4 py-1.5 text-xs"
             >
               New conversation
             </button>
             <button
               onClick={() => setTranscriptOpen((v) => !v)}
               aria-expanded={transcriptOpen}
-              className="rounded-full border border-white/10 px-4 py-1.5 text-xs text-zinc-400 hover:bg-white/5 hover:text-white"
+              className="btn-ghost px-4 py-1.5 text-xs"
             >
               {transcriptOpen ? 'Hide transcript' : 'Conversation'}
             </button>

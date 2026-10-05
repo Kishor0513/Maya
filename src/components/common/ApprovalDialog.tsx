@@ -22,7 +22,7 @@ export function ApprovalDialog() {
       aria-label={`Allow ${pending.tool}?`}
       className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4"
     >
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0B0B0F] p-6 shadow-soft">
+      <div className="w-full max-w-md dialog-card p-6">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-2xl italic text-white">Let Maya do this?</h2>
           <span className={`rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-widest ${riskColor}`}>

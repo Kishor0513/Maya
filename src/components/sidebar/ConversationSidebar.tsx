@@ -68,7 +68,7 @@ export function ConversationSidebar({
         <div className="px-4 pt-4">
           <button
             onClick={() => newConversation()}
-            className="w-full rounded-full bg-white/[0.07] border border-white/10 py-2.5 text-sm text-white hover:bg-white/[0.11] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
+            className="btn-accent w-full py-2.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
           >
             + New conversation
           </button>
@@ -93,10 +93,10 @@ export function ConversationSidebar({
         </nav>
 
         <div className="border-t border-white/[0.07] p-3 grid grid-cols-2 gap-2">
-          <button onClick={onOpenMemory} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Memory</button>
-          <button onClick={onOpenDocs} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Knowledge</button>
-          <button onClick={onOpenPlans} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Plans</button>
-          <button onClick={onOpenSettings} className="rounded-full border border-white/10 py-2 text-xs text-zinc-300 hover:bg-white/5">Settings</button>
+          <button onClick={onOpenMemory} className="chip py-2 text-xs">Memory</button>
+          <button onClick={onOpenDocs} className="chip py-2 text-xs">Knowledge</button>
+          <button onClick={onOpenPlans} className="chip py-2 text-xs">Plans</button>
+          <button onClick={onOpenSettings} className="chip py-2 text-xs">Settings</button>
         </div>
       </aside>
     </>
@@ -123,7 +123,7 @@ function Section({
   if (items.length === 0) return null;
   return (
     <div className="mt-2">
-      <p className="px-3 pb-1 text-[10px] uppercase tracking-[0.18em] text-zinc-600">{title}</p>
+      <p className="section-label px-3 pb-1">{title}</p>
       <ul className="space-y-0.5">
         {items.map((c) => (
           <li key={c.id} className="group relative">
@@ -131,8 +131,10 @@ function Section({
               onClick={() => { setActive(c.id); onNavigate(); }}
               aria-current={c.id === activeId}
               className={cx(
-                'w-full rounded-xl px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60',
-                c.id === activeId ? 'bg-violet-300/[0.12] text-white' : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200',
+                'w-full rounded-xl border border-transparent px-3 py-2.5 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60',
+                c.id === activeId
+                  ? 'border-violet-300/25 bg-violet-300/[0.12] text-white shadow-soft'
+                  : 'text-zinc-400 hover:border-white/10 hover:bg-white/[0.05] hover:text-zinc-200',
               )}
             >
               <span className="block truncate text-sm">{c.title}</span>

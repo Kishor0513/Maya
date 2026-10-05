@@ -34,6 +34,18 @@ export function VoiceButton({
 
   return (
     <div className="flex flex-col items-center gap-3">
+      <div
+        aria-hidden={false}
+        className={cx(
+          'rounded-full p-[3px] transition-all duration-300',
+          active ? 'shadow-glow scale-105' : 'hover:scale-[1.03]',
+        )}
+        style={{
+          background: active
+            ? 'conic-gradient(from 120deg, var(--accent), #f9a8d4, var(--accent-deep), var(--accent))'
+            : 'linear-gradient(160deg, rgba(255,255,255,0.22), rgba(255,255,255,0.05))',
+        }}
+      >
       <button
         type="button"
         aria-label={micPermission === 'denied' ? 'Microphone blocked — open settings' : label}
@@ -82,19 +94,22 @@ export function VoiceButton({
           }
         }}
         className={cx(
-          'group relative grid h-20 w-20 place-items-center rounded-full transition-all duration-200',
+          'group relative grid h-[4.5rem] w-[4.5rem] place-items-center rounded-full transition-colors duration-200',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black',
-          active
-            ? 'bg-gradient-to-br from-violet-300 to-pink-300 text-black shadow-glow scale-105'
-            : 'bg-white/[0.07] text-white hover:bg-white/[0.12] border border-white/10 shadow-soft',
         )}
+        style={
+          active
+            ? { background: 'linear-gradient(135deg, var(--accent), #f9a8d4)', color: 'var(--accent-ink)' }
+            : { background: 'var(--bg-soft)', color: 'var(--ink)' }
+        }
       >
         {active && (
-          <span aria-hidden className="absolute inset-[-6px] rounded-full border border-violet-300/30 animate-ping [animation-duration:1.8s]" />
+          <span aria-hidden className="absolute inset-[-9px] rounded-full border border-violet-300/30 animate-ping [animation-duration:1.8s]" />
         )}
         <MicIcon speaking={convState === 'speaking'} />
       </button>
-      <p className="text-sm text-zinc-400" aria-live="polite">
+      </div>
+      <p className="chip px-3.5 py-1 text-xs" aria-live="polite">
         {label}
       </p>
     </div>

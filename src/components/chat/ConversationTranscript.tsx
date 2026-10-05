@@ -82,7 +82,7 @@ export function ConversationTranscript({
   return (
     <section
       aria-label="Conversation transcript"
-      className="w-full max-w-xl mx-auto rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-4 max-h-[38vh] overflow-y-auto shadow-soft"
+      className="glass-panel w-full max-w-xl mx-auto rounded-[1.75rem] p-4 sm:p-5 max-h-[38vh] overflow-y-auto"
     >
       {messages.length === 0 && !partialUser && !partialMaya ? (
         <p className="text-sm text-zinc-500 text-center py-6">

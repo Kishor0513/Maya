@@ -10,7 +10,7 @@ export function PermissionDialog({
   if (!open) return null;
   return (
     <div role="dialog" aria-modal="true" aria-label="Microphone permission" className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0B0B0F] p-6 text-center shadow-soft">
+      <div className="w-full max-w-sm dialog-card p-6 text-center">
         <div aria-hidden className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-violet-300/15">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C4B5FD" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
             <rect x="9" y="2.5" width="6" height="11" rx="3" fill="#C4B5FD" stroke="none" />

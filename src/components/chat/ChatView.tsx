@@ -85,15 +85,17 @@ export function ChatView({
               <p className="mt-2 text-sm text-zinc-500">
                 {daypart()}. Ask her something, tell her something — or tap the mic and just talk.
               </p>
-              <div className="mt-6 flex flex-wrap justify-center gap-2">
+              <div className="mx-auto mt-6 grid max-w-xl grid-cols-1 gap-2 text-left sm:grid-cols-3">
                 {shownSuggestions.map((s) => (
                   <button
                     key={s.label}
                     type="button"
                     onClick={() => onSuggestion(s.send)}
-                    className="rounded-full border border-white/10 bg-white/[0.05] px-4 py-2 text-sm text-zinc-300 hover:bg-white/10 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
+                    className="suggest-card text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
                   >
-                    {s.label}
+                    <span aria-hidden className="suggest-dot" />
+                    <span className="flex-1">{s.label}</span>
+                    <span aria-hidden className="text-zinc-500">→</span>
                   </button>
                 ))}
               </div>
@@ -141,7 +143,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
   if (mine) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[92%] rounded-2xl rounded-br-md border border-violet-200/15 bg-violet-300/[0.14] px-4 py-2.5 sm:max-w-[85%]">
+        <div className="msg-user max-w-[92%] px-4 py-2.5 sm:max-w-[85%]">
           <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-zinc-100">
             {message.text}
           </p>
@@ -161,7 +163,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         <p className="mb-1 text-[11px] uppercase tracking-[0.14em] text-zinc-500">
           Maya · {formatTime(message.timestamp)}
         </p>
-        <div className="rounded-2xl rounded-tl-md border border-white/[0.07] bg-white/[0.04] px-4 py-2.5">
+        <div className="msg-maya px-4 py-2.5">
           <Markdown
             text={message.text}
             className="text-[15px] leading-relaxed text-zinc-100 [&_p]:my-1 [&_p]:first:mt-0 [&_p]:last:mb-0"

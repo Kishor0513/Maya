@@ -24,7 +24,7 @@ export function AuthGate() {
 
   return (
     <div role="dialog" aria-modal="true" aria-label="Sign in to Maya" className="fixed inset-0 z-50 grid place-items-center bg-[#050505]/95 backdrop-blur p-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#0B0B0F] p-6 shadow-soft">
+      <form onSubmit={submit} className="w-full max-w-sm dialog-card p-6">
         <h1 className="font-display text-4xl italic text-white text-center">Maya</h1>
         <p className="mt-2 text-center text-sm text-zinc-500">
           This Maya server needs an account. Sign in to continue.
