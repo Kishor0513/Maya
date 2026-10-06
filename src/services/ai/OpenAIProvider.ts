@@ -66,7 +66,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       method: 'POST',
       headers: gatewayHeaders({ 'Content-Type': 'application/json' }),
       credentials: 'include',
-      signal: this.signal,
+      signal: this.signal ?? AbortSignal.timeout(90000),
       body: JSON.stringify({
         model: this.opts.model,
         messages: this.toWire(messages, context),
@@ -90,7 +90,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         method: 'POST',
         headers: gatewayHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
         credentials: 'include',
-        signal: this.signal,
+        signal: this.signal ?? AbortSignal.timeout(90000),
         body: JSON.stringify({
           model: this.opts.model,
           messages: this.toWire(messages, context),

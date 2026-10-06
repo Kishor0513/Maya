@@ -291,6 +291,7 @@ export function useConversationEngine() {
   const abortRef = useRef<AbortController | null>(null);
   const speakingRef = useRef(false);
   const processingRef = useRef(false);
+  const turnStartedRef = useRef(0);
   const spokenRef = useRef(0);
   // Last outbound turn, for the offline outbox. Refs (not closure locals)
   // so every catch path can reach them.
@@ -459,9 +460,23 @@ export function useConversationEngine() {
   const processTurn = useCallback(
     async (rawText: string, images: string[] = [], via: 'text' | 'voice' | 'suggestion' = 'text', retryOf: string | null = null) => {
       const text = rawText.trim();
-      if ((!text && images.length === 0) || processingRef.current) return false;
+      if (!text && images.length === 0) return false;
+      if (processingRef.current) {
+        // Self-heal: a turn that never settled (wedged TTS/fetch/stream)
+        // must not brick sends forever — force-release after 2 minutes.
+        if (Date.now() - (turnStartedRef.current ?? 0) > 120000) {
+          processingRef.current = false;
+          speakingRef.current = false;
+          useMayaStore.getState().setTtsActive(false);
+          useMayaStore.getState().setActivity('idle');
+          useConversationStore.getState().setConvState('connected');
+        } else {
+          return false;
+        }
+      }
       trackEvent('message_sent', { via, images: images.length });
       processingRef.current = true;
+      turnStartedRef.current = Date.now();
       abortRef.current?.abort();
       const abort = new AbortController();
       abortRef.current = abort;
