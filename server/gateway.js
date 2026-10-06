@@ -17,9 +17,13 @@
  * endpoint "/api" (Vite proxies it here in dev), model = your model ID.
  *
  * Env:
-  *   UPSTREAM_BASE  brain endpoint (Gemini OpenAI-compat, or local)
+  *   UPSTREAM_BASE  brain endpoint (Gemini OpenAI-compat, Groq, Ollama, or local)
  *   UPSTREAM_KEY   server-side key, sent as Bearer or x-goog-api-key (auto)
  *   UPSTREAM_MODEL default model when the client doesn't specify one
+ *   UPSTREAM2..5_BASE/KEY/MODEL/AUTH  failover spares, e.g. Groq free tier:
+ *     UPSTREAM2_BASE=https://api.groq.com/openai/v1
+ *     UPSTREAM2_KEY=gsk_paste_yours_here
+ *     UPSTREAM2_MODEL=llama-3.3-70b-versatile
  *   USERS      optional multi-user gate, e.g. USERS="alice:pw1,bob:pw2"
  *              (home-grade; empty = open single-user mode)
  *   COMPUTER_TOOLS=true   enable local computer control (screenshots, shell,
@@ -58,17 +62,58 @@ const UPSTREAM_BASE = (
 const UPSTREAM_MODEL =
   process.env.UPSTREAM_MODEL ?? 'gemini-3.6-flash';
 const UPSTREAM_KEY = process.env.UPSTREAM_KEY ?? '';
-// All OpenAI-compatible endpoints (Gemini /openai, Ollama, vLLM)
+// All OpenAI-compatible endpoints (Gemini /openai, Groq, Ollama, vLLM)
 // authenticate with a Bearer token. Set UPSTREAM_AUTH=x-goog-api-key only
 // when talking to Google's native (non-OpenAI) endpoints.
 const UPSTREAM_AUTH = process.env.UPSTREAM_AUTH ?? 'bearer';
+
+// Failover chain: primary UPSTREAM_* plus numbered UPSTREAM2..5_* spares,
+// then a built-in keyless fallback. A throttled/dead provider rolls to the
+// next link inside the same request — the app only sees an error when every
+// link fails. Add a spare like: UPSTREAM2_BASE=https://api.groq.com/openai/v1
+// UPSTREAM2_KEY=gsk_... UPSTREAM2_MODEL=llama-3.3-70b-versatile
+function buildChain() {
+  const chain = [
+    { base: UPSTREAM_BASE, key: UPSTREAM_KEY, model: UPSTREAM_MODEL, auth: UPSTREAM_AUTH, name: 'primary' },
+  ];
+  for (let i = 2; i <= 5; i++) {
+    const base = (process.env[`UPSTREAM${i}_BASE`] ?? '').replace(/\/$/, '');
+    if (!base) continue;
+    chain.push({
+      base,
+      key: process.env[`UPSTREAM${i}_KEY`] ?? '',
+      model: process.env[`UPSTREAM${i}_MODEL`] ?? 'openai',
+      auth: process.env[`UPSTREAM${i}_AUTH`] ?? 'bearer',
+      name: `upstream${i}`,
+    });
+  }
+  // Last resort: keyless public inference (slower, fair-use limits).
+  chain.push({
+    base: 'https://text.pollinations.ai/openai',
+    key: '',
+    model: 'openai',
+    auth: 'bearer',
+    name: 'pollinations-fallback',
+  });
+  return chain;
+}
+const UPSTREAMS = buildChain();
+let lastServedBy = 'none';
+
+function entryNeedsKey(up) {
+  return up.base.includes('googleapis.com') && !up.key;
+}
 // Local upstreams need no key; googleapis.com always does.
 const needsAuth = UPSTREAM_BASE.includes('googleapis.com');
 
+function authHeadersFor(up) {
+  if (!up.key) return {};
+  if (up.auth === 'x-goog-api-key') return { 'x-goog-api-key': up.key };
+  return { Authorization: `Bearer ${up.key}` };
+}
+
 function authHeaders() {
-  if (!UPSTREAM_KEY) return {};
-  if (UPSTREAM_AUTH === 'x-goog-api-key') return { 'x-goog-api-key': UPSTREAM_KEY };
-  return { Authorization: `Bearer ${UPSTREAM_KEY}` };
+  return authHeadersFor(UPSTREAMS[0]);
 }
 const MAX_BODY = 1_000_000;
 
@@ -297,14 +342,39 @@ function pickModel(body) {
     : UPSTREAM_MODEL;
 }
 
-async function callHf(messages, model, stream) {
-  return fetch(`${UPSTREAM_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ model, messages, stream }),
+async function callHf(messages, clientModel, stream) {
+  let lastStatus = 0;
+  for (const [i, up] of UPSTREAMS.entries()) {
+    if (entryNeedsKey(up)) continue;
+    // First link honors the client's model choice; spares use their own
+    // (slugs differ per vendor).
+    const model = i === 0 ? clientModel || up.model : up.model;
+    try {
+      const res = await fetch(`${up.base}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeadersFor(up),
+        },
+        body: JSON.stringify({ model, messages, stream }),
+      });
+      if (res.ok) {
+        if (i > 0) console.log(`[chat] failover → ${up.name} (${model})`);
+        lastServedBy = `${up.name}:${model}`;
+        return res;
+      }
+      lastStatus = res.status;
+      await res.text().catch(() => undefined);
+      console.log(`[chat] ${up.name} → ${res.status}, trying next`);
+    } catch (err) {
+      console.log(`[chat] ${up.name} unreachable, trying next`);
+    }
+  }
+  // Shape matches a real error response so callers keep working —
+  // notably, upstream 429s still surface as rate-limited downstream.
+  return new Response(JSON.stringify({ error: 'all upstreams failed' }), {
+    status: lastStatus || 502,
+    headers: { 'Content-Type': 'application/json' },
   });
 }
 
@@ -534,7 +604,7 @@ function indexMemoryVec(owner, saved) {
 }
 
 async function handleChat(req, res) {
-  if (needsAuth && !UPSTREAM_KEY) return json(res, 503, { error: 'gateway has no API key set (UPSTREAM_KEY)' });
+  if (!UPSTREAMS.some((u) => !entryNeedsKey(u))) return json(res, 503, { error: 'no usable brain — set UPSTREAM_KEY or configure an upstream' });
   let body;
   try {
     body = await readJson(req);
@@ -577,9 +647,9 @@ async function handleChatStream(req, res) {
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
   };
-  if (needsAuth && !UPSTREAM_KEY) {
+  if (!UPSTREAMS.some((u) => !entryNeedsKey(u))) {
     res.writeHead(503, headers);
-    res.write(`data: ${JSON.stringify({ error: 'gateway has no API key set (UPSTREAM_KEY)' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ error: 'no usable brain — set UPSTREAM_KEY or configure an upstream' })}\n\n`);
     res.write('data: [DONE]\n\n');
     return res.end();
   }
@@ -693,7 +763,7 @@ async function handle(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/health') {
-    return json(res, 200, { ok: true, model: UPSTREAM_MODEL, base: UPSTREAM_BASE, key: UPSTREAM_KEY ? 'set' : needsAuth ? 'missing' : 'not-needed-locally', auth: authEnabled, db: STORE_KIND });
+    return json(res, 200, { ok: true, model: UPSTREAM_MODEL, base: UPSTREAM_BASE, key: UPSTREAM_KEY ? 'set' : needsAuth ? 'missing' : 'not-needed-locally', auth: authEnabled, db: STORE_KIND, chain: UPSTREAMS.map((u) => u.name), serving: lastServedBy });
   }
   if (req.method === 'POST' && url.pathname === '/api/login') {
     try {
