@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useConversationStore } from '../../stores/conversationStore';
+import { useAuthStore } from '../../stores/authStore';
 import { useComputerStore } from '../../stores/computerStore';
 import { memoryService } from '../../services/memory/MemoryService';
 import { textToSpeech } from '../../services/speech/TextToSpeech';
@@ -85,6 +86,8 @@ export function Slider({
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const s = useSettingsStore();
   const conv = useConversationStore();
+  const authToken = useAuthStore((s) => s.token);
+  const logout = useAuthStore((s) => s.logout);
   const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
@@ -277,6 +280,15 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           <label className="text-xs uppercase tracking-widest text-zinc-500" htmlFor="yourname">What should Maya call you?</label>
           <input id="yourname" value={s.userName} onChange={(e) => s.update('userName', e.target.value)}
             placeholder="Your name" className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white" />
+          {authToken && (
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="mt-3 w-full rounded-full border border-rose-300/20 py-2 text-xs text-rose-200 hover:bg-rose-300/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+            >
+              Sign out
+            </button>
+          )}
           <p className="mt-3 text-[11px] text-zinc-600">Keyboard: Space push-to-talk · Esc stop · Ctrl/⌘+K search · Ctrl/⌘+N new chat</p>
           <button
             type="button"
