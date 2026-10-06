@@ -37,12 +37,59 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { exec, execFile } from 'node:child_process';
-import { store, STORE_KIND, parseUsers, verifyUser, issueToken, verifyFileUser, chunkText, cosineSim } from './store_supabase.js';
+// NOTE: store is imported dynamically AFTER loadEnvFile() below — static
+// imports evaluate first, which would read env before .env is loaded.
+loadEnvFile();
+const {
+  store,
+  STORE_KIND,
+  parseUsers,
+  verifyUser,
+  issueToken,
+  verifyFileUser,
+  chunkText,
+  cosineSim,
+} = await import('./store_supabase.js');
 
 const USERS = parseUsers();
 const authEnabled = USERS.size > 0;
 
 const PORT = Number(process.env.PORT ?? 8787);
+
+// Auto-load server/.env (repo server/ dir or CWD) so `npm start` just works.
+// Real environment variables always win — file values only fill gaps.
+function loadEnvFile() {
+  try {
+    const candidates = [
+      path.join(process.cwd(), 'server', '.env'),
+      path.join(process.cwd(), '.env'),
+    ];
+    for (const file of candidates) {
+      let text;
+      try {
+        if (!fs.existsSync(file)) continue;
+        text = fs.readFileSync(file, 'utf8');
+      } catch {
+        continue;
+      }
+      for (const line of text.split('\n')) {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) continue;
+        const i = t.indexOf('=');
+        if (i <= 0) continue;
+        const k = t.slice(0, i).trim();
+        let v = t.slice(i + 1).trim();
+        if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) {
+          v = v.slice(1, -1);
+        }
+        if (k && !(k in process.env)) process.env[k] = v;
+      }
+      break;
+    }
+  } catch {
+    /* env loading never breaks boot */
+  }
+}
 // Optional shared secret: when set, every /api/* request must carry it as
 // the x-gateway-token header, otherwise 401. Stops strangers from spending
 // your upstream quota once the gateway is public. (No user accounts here —

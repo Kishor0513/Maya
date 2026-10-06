@@ -57,9 +57,9 @@ no proxy, and no CORS at runtime:
 
 ```bash
 npm install
+npm run setup        # asks once, writes server/.env (safe to re-run)
 npm run build        # once (rebuild after frontend changes)
-set -a; source server/.env; set +a
-node server/gateway.js   # → open http://localhost:8787
+npm start            # → open http://localhost:8787 (no sourcing needed)
 ```
 
 Just talk — Talk and Chat views, voice, memory, streaming, and interruption
