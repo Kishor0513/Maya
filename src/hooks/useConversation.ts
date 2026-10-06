@@ -12,6 +12,7 @@ import { useMayaStore } from '../stores/mayaStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useAuthStore } from '../stores/authStore';
 import { trackEvent } from '../services/analytics';
+import { RateLimitedError } from '../services/ai/AIProvider';
 import { stashOutbox } from '../services/sync';
 import { getTool, describeWhen, callGatewayTool } from '../services/tools/MayaTools';
 import {
@@ -456,7 +457,7 @@ export function useConversationEngine() {
   }, []);
 
   const processTurn = useCallback(
-    async (rawText: string, images: string[] = [], via: 'text' | 'voice' | 'suggestion' = 'text') => {
+    async (rawText: string, images: string[] = [], via: 'text' | 'voice' | 'suggestion' = 'text', retryOf: string | null = null) => {
       const text = rawText.trim();
       if ((!text && images.length === 0) || processingRef.current) return false;
       trackEvent('message_sent', { via, images: images.length });
@@ -469,6 +470,7 @@ export function useConversationEngine() {
       // Everything below runs inside try/finally so the busy lock always
       // releases — a stuck lock silently swallows all future sends.
       let placeholder: ChatMessage | null = null;
+      let toolCalls: ToolCallRecord[] = [];
       try {
       const st = useConversationStore.getState();
       let activeId = st.activeId;
@@ -482,37 +484,55 @@ export function useConversationEngine() {
             (u.startsWith('data:image/') || u.startsWith('https://')),
         )
         .slice(0, 3);
-      st.appendMessage({
-        conversationId: activeId,
-        role: 'user',
-        text,
-        ...(cleanImages.length > 0 ? { images: cleanImages } : {}),
-      });
-      st.setPartialUser('');
-      st.setPartialMaya('');
-      st.setConvState('processing');
-      pendingRef.current = { text, images: cleanImages, conversationId: activeId };
-      useMayaStore.getState().setActivity('processing');
-      useMayaStore.getState().pushUserTurn(text);
+      // First attempt: record the user turn and extract memories.
+      // (Throttle retries skip this block — user message, memories, and
+      // tool side effects already happened in attempt one, and markers
+      // were stripped, so nothing executes twice.)
+      if (!retryOf) {
+        st.appendMessage({
+          conversationId: activeId,
+          role: 'user',
+          text,
+          ...(cleanImages.length > 0 ? { images: cleanImages } : {}),
+        });
+        st.setPartialUser('');
+        st.setPartialMaya('');
+        st.setConvState('processing');
+        pendingRef.current = { text, images: cleanImages, conversationId: activeId };
+        useMayaStore.getState().setActivity('processing');
+        useMayaStore.getState().pushUserTurn(text);
 
-      // Memory extraction: fast heuristic now, LLM pass in background.
-      if (settingsRef.current.privacy.memoryEnabled) {
-        memoryService.extractFromTurn(text, activeId);
-        void extractMemoriesLLM(text, activeId).catch(() => undefined);
-        // eslint-disable-next-line no-misleading-character-class -- Devanagari block intentionally includes combining marks
-        const nameHit = text.match(/(?:my name is|call me)\s+([A-Za-z\u0900-\u097F][\w\u0900-\u097F .-]{1,30})/iu);
-        if (nameHit && !settingsRef.current.userName) {
-          useSettingsStore.getState().update('userName', nameHit[1].trim());
+        // Memory extraction: fast heuristic now; LLM pass only when the cheap
+        // pass found something or the turn is substantive (each call spends
+        // shared free-tier quota: 20 req/min).
+        if (settingsRef.current.privacy.memoryEnabled) {
+          const quickHits = memoryService.extractFromTurn(text, activeId);
+          if (quickHits.length > 0 || text.length > 120) {
+            void extractMemoriesLLM(text, activeId).catch(() => undefined);
+          }
+          // eslint-disable-next-line no-misleading-character-class -- Devanagari block intentionally includes combining marks
+          const nameHit = text.match(/(?:my name is|call me)\s+([A-Za-z\u0900-\u097F][\w\u0900-\u097F .-]{1,30})/iu);
+          if (nameHit && !settingsRef.current.userName) {
+            useSettingsStore.getState().update('userName', nameHit[1].trim());
+          }
         }
-      }
 
-      // Assistant placeholder for streaming
-      placeholder = st.appendMessage({
-        conversationId: activeId,
-        role: 'assistant',
-        text: '',
-        partial: true,
-      });
+        // Assistant placeholder for streaming
+        placeholder = st.appendMessage({
+          conversationId: activeId,
+          role: 'assistant',
+          text: '',
+          partial: true,
+        });
+      } else {
+        // Throttle retry: reuse the waiting placeholder, re-assert UI.
+        const existing = st.conversations
+          .flatMap((c) => c.messages)
+          .find((m) => m.id === retryOf);
+        placeholder = existing ?? ({ id: retryOf } as ChatMessage);
+        st.setConvState('processing');
+        useMayaStore.getState().setActivity('processing');
+      }
 
         const ctx = await buildContext(activeId);
         if (cleanImages.length > 0) ctx.images = cleanImages;
@@ -563,7 +583,7 @@ export function useConversationEngine() {
         // markers from what the user sees, then answer with the results.
         let finalText = full.trim() || 'Hmm — I lost that thought. Say it once more?';
         const allSources: SourceRef[] = [];
-        const toolCalls: ToolCallRecord[] = [];
+        toolCalls = [];
         for (let round = 0; round < 2 && !abort.signal.aborted; round++) {
           const jobs = extractToolJobs(finalText);
           if (jobs.length === 0) break;
@@ -670,9 +690,33 @@ export function useConversationEngine() {
           }
           return true;
         }
+        if (
+          err instanceof RateLimitedError &&
+          err.retryAfter <= 75 &&
+          !retryOf &&
+          toolCalls.length === 0 &&
+          placeholder
+        ) {
+          // Throttled, not broken: countdown on the live placeholder, then
+          // retry this same turn once. Safe: no duplicate user message, and
+          // tool markers were already stripped, so nothing executes twice.
+          // (Skipped entirely when tools ran — side effects stay single.)
+          const retryId: string = placeholder.id;
+          useConversationStore.getState().updateMessage(retryId, {
+            text: `Slowing down for a moment — retrying in about ${err.retryAfter}s…`,
+            partial: true,
+          });
+          const waitMs = err.retryAfter * 1000;
+          const retryText = text;
+          const retryImages = pendingRef.current?.images ?? [];
+          setTimeout(() => {
+            void processTurn(retryText, retryImages, via, retryId);
+          }, waitMs);
+          return true;
+        }
         if (placeholder) {
           useConversationStore.getState().updateMessage(placeholder.id, {
-            text: 'I lost the connection for a moment. Try again?',
+          text: 'I lost the connection for a moment. Try again?',
             partial: false,
           });
         }

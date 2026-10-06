@@ -5,6 +5,7 @@ import type {
   ConversationContext,
 } from '../../types';
 import type { AIProvider } from './AIProvider';
+import { RateLimitedError } from './AIProvider';
 import { buildSystemPrompt } from './prompt';
 import { gatewayHeaders } from '../gateway';
 
@@ -71,6 +72,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         messages: this.toWire(messages, context),
       }),
     });
+    if (res.status === 429) throw new RateLimitedError(await readRetryAfter(res));
     if (!res.ok) throw this.httpError(res.status);
     const data = (await res.json()) as ChatWireResponse;
     return { text: data.text ?? '' };
@@ -105,6 +107,9 @@ export class OpenAICompatibleProvider implements AIProvider {
     }
     if (!res.ok || !res.body) {
       if (res.status === 401 || res.status === 403) throw this.httpError(res.status);
+      // Throttled: surface the wait hint directly instead of burning
+      // another request on the unary fallback.
+      if (res.status === 429) throw new RateLimitedError(await readRetryAfter(res));
       const one = await this.generateResponse(messages, context);
       yield { text: one.text, done: true };
       return;
@@ -173,4 +178,16 @@ export class OpenAICompatibleProvider implements AIProvider {
     if (status >= 500) return new Error('Backend unavailable. Please try again shortly.');
     return new Error(`Chat request failed (${status}).`);
   }
+}
+
+/** Best-effort wait hint from a 429 body ({ retryAfter }), else 60s. */
+async function readRetryAfter(res: Response): Promise<number> {
+  try {
+    const data = (await res.json()) as { retryAfter?: unknown };
+    const n = Number(data?.retryAfter);
+    if (Number.isFinite(n) && n > 0) return Math.min(90, Math.ceil(n));
+  } catch {
+    /* non-JSON body — fall through */
+  }
+  return 60;
 }

@@ -56,3 +56,17 @@ export async function* streamWords(
   }
   yield doneChunk(buf);
 }
+
+/**
+ * Throttle signal carrying the server's wait hint (seconds).
+ * Thrown instead of a generic Error so callers can countdown + retry
+ * instead of showing a connection failure.
+ */
+export class RateLimitedError extends Error {
+  readonly retryAfter: number;
+  constructor(retryAfter = 60) {
+    super(`Rate limited by the AI backend — retry in about ${retryAfter}s.`);
+    this.name = 'RateLimitedError';
+    this.retryAfter = retryAfter;
+  }
+}
